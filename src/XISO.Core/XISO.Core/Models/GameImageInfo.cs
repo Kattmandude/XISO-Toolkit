@@ -17,6 +17,7 @@ public class GameImageInfo
     public long FileSize { get; set; }
 
     public string TitleId { get; set; } = string.Empty;
+    public string MediaId { get; set; } = string.Empty;
 
     public string Region { get; set; } = string.Empty;
 

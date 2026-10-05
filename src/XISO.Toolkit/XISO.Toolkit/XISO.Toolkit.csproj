@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,6 +9,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\XISO.Core\XISO.Core\XISO.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\XISO.Core\XISO.Core\Data\ToolkitConfiguration.json">
+      <Link>Data\ToolkitConfiguration.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\XISO.Core\XISO.Core\Data\GameTitles.json">
+      <Link>Data\GameTitles.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

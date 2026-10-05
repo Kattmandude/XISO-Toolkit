@@ -258,6 +258,91 @@ public sealed class XboxIsoReader : IDisposable
 
         return data;
     }
+    public IReadOnlyList<XdvdfsFileEntry> EnumerateFiles()
+    {
+        var files = new List<XdvdfsFileEntry>();
+
+        void WalkDirectory(
+            long directoryOffset,
+            uint directorySize,
+            string relativePath)
+        {
+            var visited = new HashSet<uint>();
+            var pending = new Stack<uint>();
+
+            pending.Push(0);
+
+            while (pending.Count > 0)
+            {
+                uint dwordOffset = pending.Pop();
+
+                if (!visited.Add(dwordOffset))
+                    continue;
+
+                long byteOffset =
+                    (long)dwordOffset * 4;
+
+                if (byteOffset >= directorySize)
+                {
+                    throw new InvalidDataException(
+                        $"Directory entry DWORD offset {dwordOffset} " +
+                        $"is outside the directory.");
+                }
+
+                long entryOffset =
+                    directoryOffset +
+                    byteOffset;
+
+                _stream.Position = entryOffset;
+
+                var entry =
+                    ReadDirectoryEntryAtCurrentPosition();
+
+                string entryPath =
+                    string.IsNullOrEmpty(relativePath)
+                        ? entry.Name
+                        : Path.Combine(relativePath, entry.Name);
+
+                if ((entry.Attributes & 0x10) != 0)
+                {
+                    long childDirectoryOffset =
+                        VolumeDescriptor.PartitionOffset +
+                        ((long)entry.StartSector * SectorSize);
+
+                    WalkDirectory(
+                        childDirectoryOffset,
+                        entry.FileSize,
+                        entryPath);
+                }
+                else
+                {
+                    files.Add(
+                        new XdvdfsFileEntry
+                        {
+                            Entry = entry,
+                            RelativePath = entryPath
+                        });
+                }
+
+                if (entry.Right != 0)
+                    pending.Push(entry.Right);
+
+                if (entry.Left != 0)
+                    pending.Push(entry.Left);
+            }
+        }
+
+        long rootDirectoryOffset =
+            VolumeDescriptor.PartitionOffset +
+            ((long)VolumeDescriptor.RootDirectorySector * SectorSize);
+
+        WalkDirectory(
+            rootDirectoryOffset,
+            VolumeDescriptor.RootDirectorySize,
+            string.Empty);
+
+        return files;
+    }
     public XdvdfsDirectoryEntry? FindEntry(string name)
     {
         if (string.IsNullOrWhiteSpace(name))

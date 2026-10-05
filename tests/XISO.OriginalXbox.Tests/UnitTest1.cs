@@ -491,4 +491,521 @@ public class XboxIsoReaderTests
             new FileInfo(isoPath).Length,
             result.FileSize);
     }
+    [Fact]
+    public void AnalyzesWorldOfOutlawsUsaAndEuropeReleases()
+    {
+        const string usaIsoPath =
+            @"F:\Downloads\World of Outlaws - Sprint Cars (USA).iso";
+
+        const string europeIsoPath =
+            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+
+        var analyzer =
+            new XISO.OriginalXbox.XboxGameImageAnalyzer();
+
+        var usa =
+            analyzer.Analyze(usaIsoPath);
+
+        var europe =
+            analyzer.Analyze(europeIsoPath);
+
+        Assert.Equal(
+            XISO.Core.Detection.XboxPlatform.Xbox360,
+            usa.Platform);
+
+        Assert.Equal(
+            XISO.Core.Detection.XboxPlatform.Xbox360,
+            europe.Platform);
+
+        Assert.Equal(
+            usa.TitleId,
+            europe.TitleId);
+
+        Assert.NotEmpty(usa.MediaId);
+        Assert.NotEmpty(europe.MediaId);
+
+        Console.WriteLine(
+            $"USA:    Title ID={usa.TitleId}, Media ID={usa.MediaId}");
+
+        Console.WriteLine(
+            $"Europe: Title ID={europe.TitleId}, Media ID={europe.MediaId}");
+    }
+    [Fact]
+    public void FindsWorldOfOutlawsInLocalTitleDatabase()
+    {
+        const string databasePath =
+            @"F:\Projects\XISO-Toolkit\src\XISO.Core\XISO.Core\Data\GameTitles.json";
+
+        var database =
+            new XISO.Core.Data.GameTitleDatabase(databasePath);
+
+        var result =
+            database.Find(
+                XISO.Core.Detection.XboxPlatform.Xbox360,
+                "54510835");
+
+        Assert.NotNull(result);
+
+        Assert.Equal(
+            "World of Outlaws: Sprint Cars",
+            result.Title);
+
+        Assert.Contains(
+            result.Releases,
+            release =>
+                release.MediaId == "15B55E58" &&
+                release.Region == "USA");
+
+        Assert.Contains(
+            result.Releases,
+            release =>
+                release.MediaId == "2E39C196" &&
+                release.Region == "Europe");
+
+        Console.WriteLine(
+            $"Title: {result.Title}");
+
+        foreach (var release in result.Releases)
+        {
+            Console.WriteLine(
+                $"Media ID: {release.MediaId} | Region: {release.Region}");
+        }
+    }
+
+    [Fact]
+    public void LoadsToolkitConfiguration()
+    {
+        const string configurationPath =
+            @"F:\Projects\XISO-Toolkit\src\XISO.Core\XISO.Core\Data\ToolkitConfiguration.json";
+
+        var store =
+            new XISO.Core.Configuration.ToolkitConfigurationStore();
+
+        var result =
+            store.Load(configurationPath);
+
+        Assert.NotNull(result);
+
+        Assert.Equal(
+            @"F:\Emulators\Xenia\games",
+            result.XeniaGameDirectory);
+
+        Assert.Equal(
+            @"F:\Emulators\Xemu\games",
+            result.XemuGameDirectory);
+
+        Assert.Equal(
+            @"F:\Emulators\Xenia\title_updates",
+            result.TitleUpdateDirectory);
+    }
+
+    [Fact]
+    public void SavesAndLoadsToolkitConfiguration()
+    {
+        var configurationPath =
+            Path.Combine(
+                Path.GetTempPath(),
+                $"XISO-Toolkit-Test-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var original =
+                new XISO.Core.Configuration.ToolkitConfiguration
+                {
+                    XeniaGameDirectory = @"F:\Emulators\Xenia Canary\games",
+                    XemuGameDirectory = @"F:\Emulators\Xemu\games",
+                    TitleUpdateDirectory = @"F:\Emulators\Xenia Canary\titleupdates"
+                };
+
+            var store =
+                new XISO.Core.Configuration.ToolkitConfigurationStore();
+
+            store.Save(
+                configurationPath,
+                original);
+
+            var loaded =
+                store.Load(configurationPath);
+
+            Assert.Equal(
+                original.XeniaGameDirectory,
+                loaded.XeniaGameDirectory);
+
+            Assert.Equal(
+                original.XemuGameDirectory,
+                loaded.XemuGameDirectory);
+
+            Assert.Equal(
+                original.TitleUpdateDirectory,
+                loaded.TitleUpdateDirectory);
+        }
+        finally
+        {
+            if (File.Exists(configurationPath))
+            {
+                File.Delete(configurationPath);
+            }
+        }
+    }
+
+    [Fact]
+    public void SavesAndLoadsProcessedIsoRecord()
+    {
+        var databasePath =
+            Path.Combine(
+                Path.GetTempPath(),
+                $"ProcessedIsos-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var records =
+                new List<XISO.Core.Models.ProcessedIsoRecord>
+                {
+                    new()
+                    {
+                        IsoPath =
+                            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso",
+
+                        IsoFileName =
+                            "World of Outlaws Sprint Cars (EU).iso",
+
+                        IsoFileSize =
+                            123456789,
+
+                        ProcessedAt =
+                            new DateTime(
+                                2026,
+                                10,
+                                5,
+                                12,
+                                0,
+                                0,
+                                DateTimeKind.Utc),
+
+                        Platform =
+                            XISO.Core.Detection.XboxPlatform.Xbox360,
+
+                        TitleId =
+                            "54510835",
+
+                        MediaId =
+                            "2E39C196",
+
+                        Title =
+                            "World of Outlaws: Sprint Cars",
+
+                        ProcessingStatus =
+                            XISO.Core.Models.OperationStatus.Completed,
+
+                        InstallationMethod =
+                            XISO.Core.Models.InstallationMethod.ExtractGameFiles,
+
+                        InstallationPath =
+                            @"F:\Emulators\Xenia\games\World of Outlaws Sprint Cars (EU)",
+
+                        TitleUpdates =
+                        [
+                            new XISO.Core.Models.TitleUpdateRecord
+                            {
+                                Number = 1,
+                                PackageName =
+                                    "TU_16L61VA_0000008000000.0000000000102",
+                                Status =
+                                    XISO.Core.Models.OperationStatus.Completed
+                            }
+                        ]
+                    }
+                };
+
+            var database =
+                new XISO.Core.Data.ProcessedIsoDatabase();
+
+            database.Save(
+                databasePath,
+                records);
+
+            var loaded =
+                database.Load(databasePath);
+
+            Assert.Single(loaded);
+
+            var record = loaded[0];
+
+            Assert.Equal(
+                @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso",
+                record.IsoPath);
+
+            Assert.Equal(
+                "World of Outlaws Sprint Cars (EU).iso",
+                record.IsoFileName);
+
+            Assert.Equal(
+                123456789,
+                record.IsoFileSize);
+
+            Assert.Equal(
+                XISO.Core.Detection.XboxPlatform.Xbox360,
+                record.Platform);
+
+            Assert.Equal(
+                "54510835",
+                record.TitleId);
+
+            Assert.Equal(
+                "2E39C196",
+                record.MediaId);
+
+            Assert.Equal(
+                "World of Outlaws: Sprint Cars",
+                record.Title);
+
+            Assert.Equal(
+                XISO.Core.Models.OperationStatus.Completed,
+                record.ProcessingStatus);
+
+            Assert.Equal(
+                XISO.Core.Models.InstallationMethod.ExtractGameFiles,
+                record.InstallationMethod);
+
+            Assert.Equal(
+                @"F:\Emulators\Xenia\games\World of Outlaws Sprint Cars (EU)",
+                record.InstallationPath);
+
+            Assert.Single(record.TitleUpdates);
+
+            Assert.Equal(
+                1,
+                record.TitleUpdates[0].Number);
+
+            Assert.Equal(
+                "TU_16L61VA_0000008000000.0000000000102",
+                record.TitleUpdates[0].PackageName);
+
+            Assert.Equal(
+                XISO.Core.Models.OperationStatus.Completed,
+                record.TitleUpdates[0].Status);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+    [Fact]
+    public void EnumeratesFilesFromXboxIso()
+    {
+        const string isoPath =
+            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+
+        using var reader =
+            new XISO.OriginalXbox.XboxIsoReader(isoPath);
+
+        var files =
+            reader.EnumerateFiles();
+
+        Assert.NotEmpty(files);
+
+        var defaultExecutable =
+            files.FirstOrDefault(file =>
+                string.Equals(
+                    file.RelativePath,
+                    "default.xex",
+                    StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(defaultExecutable);
+
+        Assert.Equal(
+            "default.xex",
+            defaultExecutable.Entry.Name);
+
+        var dataFile =
+            files.FirstOrDefault(file =>
+                string.Equals(
+                    file.RelativePath,
+                    "data1.wad",
+                    StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(dataFile);
+
+        Assert.Equal(
+            "data1.wad",
+            dataFile.Entry.Name);
+
+        Assert.All(
+            files,
+            file =>
+            {
+                Assert.False(
+                    Path.IsPathRooted(file.RelativePath));
+
+                Assert.False(
+                    string.IsNullOrWhiteSpace(file.RelativePath));
+            });
+    }
+    [Fact]
+    public void ExtractsGameFilesFromXboxIso()
+    {
+        const string sourceIso =
+            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+
+        string testRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "XISO-Toolkit-Test-" + Guid.NewGuid().ToString("N"));
+
+        string testIso =
+            Path.Combine(
+                testRoot,
+                "source.iso");
+
+        string destination =
+            Path.Combine(
+                testRoot,
+                "Game");
+
+        try
+        {
+            Directory.CreateDirectory(testRoot);
+
+            File.Copy(
+                sourceIso,
+                testIso);
+
+            var request =
+                new XISO.Core.Installation.GameInstallationRequest
+                {
+                    IsoPath = testIso,
+                    DestinationFolder = destination,
+                    Method = XISO.Core.Models.InstallationMethod.ExtractGameFiles
+                };
+
+            var installer =
+                new XISO.OriginalXbox.Installation.GameInstaller();
+
+            var result =
+                installer.Install(request);
+
+            Assert.Equal(
+                Path.GetFullPath(destination),
+                result);
+
+            Assert.True(
+                File.Exists(
+                    Path.Combine(
+                        destination,
+                        "default.xex")));
+
+            Assert.True(
+                File.Exists(
+                    Path.Combine(
+                        destination,
+                        "data1.wad")));
+
+            Assert.True(
+                File.Exists(
+                    Path.Combine(
+                        destination,
+                        "data.wad")));
+
+            Assert.True(
+                Directory.Exists(
+                    Path.Combine(
+                        destination,
+                        "$SystemUpdate")));
+
+            Assert.True(
+                File.Exists(
+                    Path.Combine(
+                        destination,
+                        "nxeart")));
+
+            Assert.True(
+                File.Exists(testIso));
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(
+                    testRoot,
+                    true);
+            }
+        }
+    }
+
+    [Fact]
+    public void MovesAndRenamesXboxIso()
+    {
+        const string sourceIso =
+            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+
+        string testRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "XISO-Toolkit-Test-" + Guid.NewGuid().ToString("N"));
+
+        string testIso =
+            Path.Combine(
+                testRoot,
+                "original.iso");
+
+        string destination =
+            Path.Combine(
+                testRoot,
+                "World of Outlaws - Sprint Cars");
+
+        const string renamedIso =
+            "World of Outlaws - Sprint Cars.iso";
+
+        try
+        {
+            Directory.CreateDirectory(testRoot);
+
+            File.Copy(
+                sourceIso,
+                testIso);
+
+            var request =
+                new XISO.Core.Installation.GameInstallationRequest
+                {
+                    IsoPath = testIso,
+                    DestinationFolder = destination,
+                    Method = XISO.Core.Models.InstallationMethod.MoveIsoImage,
+                    IsoFileName = renamedIso
+                };
+
+            var installer =
+                new XISO.OriginalXbox.Installation.GameInstaller();
+
+            var result =
+                installer.Install(request);
+
+            string expectedPath =
+                Path.GetFullPath(
+                    Path.Combine(
+                        destination,
+                        renamedIso));
+
+            Assert.Equal(
+                expectedPath,
+                result);
+
+            Assert.True(
+                File.Exists(expectedPath));
+
+            Assert.False(
+                File.Exists(testIso));
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(
+                    testRoot,
+                    true);
+            }
+        }
+    }
 }

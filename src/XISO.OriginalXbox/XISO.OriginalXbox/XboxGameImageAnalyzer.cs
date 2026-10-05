@@ -56,6 +56,9 @@ public sealed class XboxGameImageAnalyzer
             result.TitleId =
                 executionId.TitleId.ToString("X8");
 
+            result.MediaId =
+                executionId.MediaId.ToString("X8");
+
             result.Version =
                 executionId.Version.ToString();
         }

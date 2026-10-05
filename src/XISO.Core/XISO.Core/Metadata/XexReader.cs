@@ -41,6 +41,7 @@ public class XexReader
         info.Version = $"XEX optional headers: {optionalHeaderCount}";
 
         var entry = new byte[8];
+        var descriptor = new byte[8];
 
         for (int i = 0; i < optionalHeaderCount; i++)
         {
@@ -59,9 +60,7 @@ public class XexReader
             {
                 stream.Position = value;
 
-                Span<byte> descriptor = stackalloc byte[8];
-
-                if (stream.Read(descriptor) != 8)
+                if (stream.Read(descriptor, 0, 8) != 8)
                     return;
 
                 uint executionIdOffset =

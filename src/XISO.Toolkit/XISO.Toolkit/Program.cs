@@ -1,6 +1,25 @@
-﻿using XISO.Core.Analysis;
+using XISO.Core.Analysis;
+using XISO.Core.Configuration;
 
 Console.WriteLine("XISO Toolkit starting...");
+Console.WriteLine();
+
+var configurationPath =
+    Path.Combine(
+        AppContext.BaseDirectory,
+        "Data",
+        "ToolkitConfiguration.json");
+
+var configurationStore =
+    new ToolkitConfigurationStore();
+
+var configuration =
+    configurationStore.Load(configurationPath);
+
+Console.WriteLine("Configuration:");
+Console.WriteLine($"Xenia: {configuration.XeniaGameDirectory}");
+Console.WriteLine($"Xemu:  {configuration.XemuGameDirectory}");
+Console.WriteLine($"Title Updates: {configuration.TitleUpdateDirectory}");
 Console.WriteLine();
 
 if (args.Length == 0)
