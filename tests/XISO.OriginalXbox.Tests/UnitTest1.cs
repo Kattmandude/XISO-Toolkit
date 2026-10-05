@@ -280,7 +280,7 @@ public class XboxIsoReaderTests
             reader.ReadFilePrefix(executable, 24);
 
         var xexReader =
-            new XISO.OriginalXbox.Xex2Reader();
+            new XISO.Core.Metadata.Xex2Reader();
 
         var header =
             xexReader.ReadHeader(headerBytes);
@@ -326,7 +326,7 @@ public class XboxIsoReaderTests
             reader.ReadFilePrefix(executable, 144);
 
         var xexReader =
-            new XISO.OriginalXbox.Xex2Reader();
+            new XISO.Core.Metadata.Xex2Reader();
 
         var header =
             xexReader.FindOptionalHeader(
@@ -362,7 +362,7 @@ public class XboxIsoReaderTests
             reader.ReadFile(executable);
 
         var xexReader =
-            new XISO.OriginalXbox.Xex2Reader();
+            new XISO.Core.Metadata.Xex2Reader();
 
         var executionIdHeader =
             xexReader.FindOptionalHeader(
@@ -438,7 +438,7 @@ public class XboxIsoReaderTests
             reader.ReadFilePrefix(executable, 144);
 
         var xexReader =
-            new XISO.OriginalXbox.Xex2Reader();
+            new XISO.Core.Metadata.Xex2Reader();
 
         var headers =
             xexReader.ReadOptionalHeaders(headerBytes);
@@ -936,6 +936,100 @@ public class XboxIsoReaderTests
     }
 
     [Fact]
+    public void ScansXbox360GameLibrary()
+    {
+        string testRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "XISO-Toolkit-Test-" + Guid.NewGuid().ToString("N"));
+
+        string gameFolder =
+            Path.Combine(
+                testRoot,
+                "World of Outlaws - Sprint Cars");
+
+        string nonGameFolder =
+            Path.Combine(
+                testRoot,
+                "Not A Game");
+
+        try
+        {
+            Directory.CreateDirectory(gameFolder);
+            Directory.CreateDirectory(nonGameFolder);
+
+            byte[] xexData = new byte[0x15B0];
+
+            // XEX2 header.
+            WriteUInt32BigEndian(xexData, 0x00, 0x58455832);
+            WriteUInt32BigEndian(xexData, 0x04, 0x00000001);
+            WriteUInt32BigEndian(xexData, 0x08, 0x00003000);
+            WriteUInt32BigEndian(xexData, 0x0C, 0x00000000);
+            WriteUInt32BigEndian(xexData, 0x10, 0x00000090);
+            WriteUInt32BigEndian(xexData, 0x14, 1);
+
+            // Execution ID optional header.
+            WriteUInt32BigEndian(xexData, 0x18, 0x00040006);
+            WriteUInt32BigEndian(xexData, 0x1C, 0x00001598);
+
+            // European World of Outlaws Execution ID.
+            byte[] executionId =
+            [
+                0x2E, 0x39, 0xC1, 0x96,
+                0x00, 0x00, 0x00, 0x03,
+                0x00, 0x00, 0x00, 0x03,
+                0x54, 0x51, 0x08, 0x35,
+                0x00, 0x00, 0x01, 0x01,
+                0x00, 0x00, 0x00, 0x00
+            ];
+
+            Array.Copy(
+                executionId,
+                0,
+                xexData,
+                0x1598,
+                executionId.Length);
+
+            File.WriteAllBytes(
+                Path.Combine(gameFolder, "default.xex"),
+                xexData);
+
+            var scanner =
+                new XISO.Xbox360.Installation.GameLibraryScanner();
+
+            var games =
+                scanner.Scan(testRoot);
+
+            var game =
+                Assert.Single(games);
+
+            Assert.Equal(
+                Path.GetFullPath(gameFolder),
+                game.InstallationPath);
+
+            Assert.Equal(
+                "World of Outlaws - Sprint Cars",
+                game.FolderName);
+
+            Assert.Equal(
+                XISO.Core.Detection.XboxPlatform.Xbox360,
+                game.Platform);
+
+            Assert.Equal(
+                "default.xex",
+                game.Executable);
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(
+                    testRoot,
+                    true);
+            }
+        }
+    }
+    [Fact]
     public void MovesAndRenamesXboxIso()
     {
         const string sourceIso =
@@ -1007,5 +1101,15 @@ public class XboxIsoReaderTests
                     true);
             }
         }
+    }
+    private static void WriteUInt32BigEndian(
+        byte[] data,
+        int offset,
+        uint value)
+    {
+        data[offset] = (byte)(value >> 24);
+        data[offset + 1] = (byte)(value >> 16);
+        data[offset + 2] = (byte)(value >> 8);
+        data[offset + 3] = (byte)value;
     }
 }

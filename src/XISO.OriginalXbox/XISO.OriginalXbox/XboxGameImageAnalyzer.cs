@@ -1,3 +1,4 @@
+using XISO.Core.Metadata;
 using XISO.Core.Models;
 
 namespace XISO.OriginalXbox;

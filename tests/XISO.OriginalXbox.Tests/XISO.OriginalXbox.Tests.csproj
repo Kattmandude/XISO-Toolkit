@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\XISO.OriginalXbox\XISO.OriginalXbox\XISO.OriginalXbox.csproj" />
     <ProjectReference Include="..\..\src\XISO.Core\XISO.Core\XISO.Core.csproj" />
+    <ProjectReference Include="..\..\src\XISO.Xbox360\XISO.Xbox360\XISO.Xbox360.csproj" />
   </ItemGroup>
 
 </Project>

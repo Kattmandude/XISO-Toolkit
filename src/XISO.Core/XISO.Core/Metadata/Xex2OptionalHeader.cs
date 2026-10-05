@@ -1,4 +1,4 @@
-namespace XISO.OriginalXbox;
+namespace XISO.Core.Metadata;
 
 public sealed class Xex2OptionalHeader
 {
