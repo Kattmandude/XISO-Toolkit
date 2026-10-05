@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/XISO.OriginalXbox.Tests/XISO.OriginalXbox.Tests.csproj" />
+  </Folder>
   <Project Path="src/XISO.Core/XISO.Core/XISO.Core.csproj" />
   <Project Path="src/XISO.OriginalXbox/XISO.OriginalXbox/XISO.OriginalXbox.csproj" />
   <Project Path="src/XISO.Tools/XISO.Tools/XISO.Tools.csproj" />
