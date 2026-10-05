@@ -585,18 +585,35 @@ public class XboxIsoReaderTests
             store.Load(configurationPath);
 
         Assert.NotNull(result);
+        Assert.Equal(2, result.GameLibraries.Count);
+
+        var xbox360Library =
+            result.GameLibraries.Single(
+                library =>
+                    library.Platform ==
+                    XISO.Core.Detection.XboxPlatform.Xbox360);
+
+        Assert.Equal(
+            "Xbox 360 Games",
+            xbox360Library.Name);
 
         Assert.Equal(
             @"F:\Emulators\Xenia\games",
-            result.XeniaGameDirectory);
+            xbox360Library.Path);
+
+        var originalXboxLibrary =
+            result.GameLibraries.Single(
+                library =>
+                    library.Platform ==
+                    XISO.Core.Detection.XboxPlatform.OriginalXbox);
+
+        Assert.Equal(
+            "Original Xbox Games",
+            originalXboxLibrary.Name);
 
         Assert.Equal(
             @"F:\Emulators\Xemu\games",
-            result.XemuGameDirectory);
-
-        Assert.Equal(
-            @"F:\Emulators\Xenia\title_updates",
-            result.TitleUpdateDirectory);
+            originalXboxLibrary.Path);
     }
 
     [Fact]
@@ -612,9 +629,23 @@ public class XboxIsoReaderTests
             var original =
                 new XISO.Core.Configuration.ToolkitConfiguration
                 {
-                    XeniaGameDirectory = @"F:\Emulators\Xenia Canary\games",
-                    XemuGameDirectory = @"F:\Emulators\Xemu\games",
-                    TitleUpdateDirectory = @"F:\Emulators\Xenia Canary\titleupdates"
+                    GameLibraries =
+                    [
+                        new XISO.Core.Models.GameLibrary
+                        {
+                            Name = "Xbox 360 Test Library",
+                            Platform =
+                                XISO.Core.Detection.XboxPlatform.Xbox360,
+                            Path = @"D:\Games\Xbox 360"
+                        },
+                        new XISO.Core.Models.GameLibrary
+                        {
+                            Name = "Original Xbox Test Library",
+                            Platform =
+                                XISO.Core.Detection.XboxPlatform.OriginalXbox,
+                            Path = @"E:\Games\Original Xbox"
+                        }
+                    ]
                 };
 
             var store =
@@ -624,20 +655,47 @@ public class XboxIsoReaderTests
                 configurationPath,
                 original);
 
+            var savedJson =
+                File.ReadAllText(configurationPath);
+
+            Assert.Contains(
+                @"""Platform"": ""Xbox360""",
+                savedJson);
+
+            Assert.Contains(
+                @"""Platform"": ""OriginalXbox""",
+                savedJson);
+
             var loaded =
                 store.Load(configurationPath);
 
             Assert.Equal(
-                original.XeniaGameDirectory,
-                loaded.XeniaGameDirectory);
+                2,
+                loaded.GameLibraries.Count);
 
             Assert.Equal(
-                original.XemuGameDirectory,
-                loaded.XemuGameDirectory);
+                original.GameLibraries[0].Name,
+                loaded.GameLibraries[0].Name);
 
             Assert.Equal(
-                original.TitleUpdateDirectory,
-                loaded.TitleUpdateDirectory);
+                original.GameLibraries[0].Platform,
+                loaded.GameLibraries[0].Platform);
+
+            Assert.Equal(
+                original.GameLibraries[0].Path,
+                loaded.GameLibraries[0].Path);
+
+            Assert.Equal(
+                original.GameLibraries[1].Name,
+                loaded.GameLibraries[1].Name);
+
+            Assert.Equal(
+                original.GameLibraries[1].Platform,
+                loaded.GameLibraries[1].Platform);
+
+            Assert.Equal(
+                original.GameLibraries[1].Path,
+                loaded.GameLibraries[1].Path);
         }
         finally
         {
@@ -647,7 +705,6 @@ public class XboxIsoReaderTests
             }
         }
     }
-
     [Fact]
     public void SavesAndLoadsProcessedIsoRecord()
     {

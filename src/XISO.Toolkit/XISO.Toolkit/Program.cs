@@ -16,10 +16,14 @@ var configurationStore =
 var configuration =
     configurationStore.Load(configurationPath);
 
-Console.WriteLine("Configuration:");
-Console.WriteLine($"Xenia: {configuration.XeniaGameDirectory}");
-Console.WriteLine($"Xemu:  {configuration.XemuGameDirectory}");
-Console.WriteLine($"Title Updates: {configuration.TitleUpdateDirectory}");
+Console.WriteLine("Game Libraries:");
+
+foreach (var library in configuration.GameLibraries)
+{
+    Console.WriteLine(
+        $"{library.Name}: {library.Platform} | {library.Path}");
+}
+
 Console.WriteLine();
 
 if (args.Length == 0)

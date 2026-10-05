@@ -1,5 +1,14 @@
 {
-  "XeniaGameDirectory": "F:\\Emulators\\Xenia\\games",
-  "XemuGameDirectory": "F:\\Emulators\\Xemu\\games",
-  "TitleUpdateDirectory": "F:\\Emulators\\Xenia\\title_updates"
+  "GameLibraries": [
+    {
+      "Name": "Xbox 360 Games",
+      "Platform": "Xbox360",
+      "Path": "F:\\Emulators\\Xenia\\games"
+    },
+    {
+      "Name": "Original Xbox Games",
+      "Platform": "OriginalXbox",
+      "Path": "F:\\Emulators\\Xemu\\games"
+    }
+  ]
 }

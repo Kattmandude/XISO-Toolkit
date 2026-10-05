@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace XISO.Core.Configuration;
 
@@ -18,7 +19,12 @@ public sealed class ToolkitConfigurationStore
         var json = File.ReadAllText(configurationPath);
 
         return
-            JsonSerializer.Deserialize<ToolkitConfiguration>(json)
+            JsonSerializer.Deserialize<ToolkitConfiguration>(
+                json,
+                new JsonSerializerOptions
+                {
+                    Converters = { new JsonStringEnumConverter() }
+                })
             ?? new ToolkitConfiguration();
     }
 
@@ -34,7 +40,8 @@ public sealed class ToolkitConfigurationStore
                 configuration,
                 new JsonSerializerOptions
                 {
-                    WriteIndented = true
+                    WriteIndented = true,
+                    Converters = { new JsonStringEnumConverter() }
                 });
 
         File.WriteAllText(configurationPath, json);
