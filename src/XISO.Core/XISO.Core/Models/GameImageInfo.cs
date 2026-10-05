@@ -15,4 +15,10 @@ public class GameImageInfo
     public string Executable { get; set; } = string.Empty;
 
     public long FileSize { get; set; }
+
+    public string TitleId { get; set; } = string.Empty;
+
+    public string Region { get; set; } = string.Empty;
+
+    public string Version { get; set; } = string.Empty;
 }

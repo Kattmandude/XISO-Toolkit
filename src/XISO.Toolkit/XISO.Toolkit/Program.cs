@@ -26,6 +26,7 @@ var game = analyzer.Analyze(folderPath);
 Console.WriteLine($"Title: {game.Title}");
 Console.WriteLine($"Platform: {game.Platform}");
 Console.WriteLine($"Executable: {game.Executable}");
+Console.WriteLine($"Version: {game.Version}");
 Console.WriteLine($"Size: {FormatSize(game.FileSize)}");
 
 

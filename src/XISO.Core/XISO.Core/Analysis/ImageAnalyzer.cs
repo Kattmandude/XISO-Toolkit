@@ -1,4 +1,5 @@
 using XISO.Core.Detection;
+using XISO.Core.Metadata;
 using XISO.Core.Models;
 
 namespace XISO.Core.Analysis;
@@ -6,6 +7,12 @@ namespace XISO.Core.Analysis;
 public class ImageAnalyzer : IImageAnalyzer
 {
     private readonly IsoPlatformDetector _detector;
+
+    private readonly List<IGameMetadataReader> _readers =
+    [
+        new Xbox360MetadataReader(),
+        new OriginalXboxMetadataReader()
+    ];
 
     public ImageAnalyzer()
     {
@@ -31,6 +38,20 @@ public class ImageAnalyzer : IImageAnalyzer
         };
 
         info.Title = Path.GetFileName(folderPath);
+
+        if (!string.IsNullOrEmpty(info.Executable))
+        {
+            var executablePath = Path.Combine(folderPath, info.Executable);
+
+            foreach (var reader in _readers)
+            {
+                if (reader.CanRead(executablePath))
+                {
+                    reader.ReadMetadata(executablePath, info);
+                    break;
+                }
+            }
+        }
 
         return info;
     }
