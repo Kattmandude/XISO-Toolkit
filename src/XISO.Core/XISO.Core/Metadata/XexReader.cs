@@ -11,7 +11,10 @@ public class XexReader
 
         Span<byte> magic = stackalloc byte[4];
 
-        stream.Read(magic);
+        int bytesRead = stream.Read(magic);
+
+        if (bytesRead != 4)
+            return false;
 
         return magic.SequenceEqual("XEX2"u8);
     }
