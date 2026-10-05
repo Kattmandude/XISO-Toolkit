@@ -1,0 +1,14 @@
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.cache
+
+# Build output
+bin/
+obj/
+
+# Build artifacts
+*.dll
+*.exe
+*.pdb
