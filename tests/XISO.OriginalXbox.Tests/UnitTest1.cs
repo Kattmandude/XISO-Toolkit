@@ -455,4 +455,40 @@ public class XboxIsoReaderTests
                 $"Value=0x{headers[i].Value:X8}");
         }
     }
+    [Fact]
+    public void AnalyzesWorldOfOutlawsGameImage()
+    {
+        const string isoPath =
+            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+
+        var analyzer =
+            new XISO.OriginalXbox.XboxGameImageAnalyzer();
+
+        var result =
+            analyzer.Analyze(isoPath);
+
+        Assert.Equal(
+            "World of Outlaws Sprint Cars (EU).iso",
+            result.FileName);
+
+        Assert.Equal(
+            XISO.Core.Detection.XboxPlatform.Xbox360,
+            result.Platform);
+
+        Assert.Equal(
+            "default.xex",
+            result.Executable);
+
+        Assert.Equal(
+            "54510835",
+            result.TitleId);
+
+        Assert.Equal(
+            "3",
+            result.Version);
+
+        Assert.Equal(
+            new FileInfo(isoPath).Length,
+            result.FileSize);
+    }
 }
