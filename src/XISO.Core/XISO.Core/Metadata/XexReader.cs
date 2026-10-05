@@ -57,23 +57,33 @@ public class XexReader
 
             if (headerId == 0x000405)
             {
-                stream.Position = 0x6C8;
+                stream.Position = value;
+
+                Span<byte> descriptor = stackalloc byte[8];
+
+                if (stream.Read(descriptor) != 8)
+                    return;
+
+                uint executionIdOffset =
+                    BinaryPrimitives.ReadUInt32BigEndian(descriptor[0..4]);
+
+                stream.Position = executionIdOffset;
 
                 byte[] executionId = new byte[24];
 
                 if (stream.Read(executionId, 0, 24) == 24)
                 {
                     uint mediaId =
-                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(0, 4));
+                        BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(0, 4));
 
                     uint version =
-                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(4, 4));
+                        BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(4, 4));
 
                     uint baseVersion =
-                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(8, 4));
+                        BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(8, 4));
 
                     uint titleId =
-                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(12, 4));
+                        BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(12, 4));
 
                     info.TitleId = titleId.ToString("X8");
 
