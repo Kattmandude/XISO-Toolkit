@@ -16,9 +16,6 @@ public class Xbox360MetadataReader : IGameMetadataReader
     {
         info.Executable = "default.xex";
 
-        if (_xexReader.IsValidXex(executablePath))
-        {
-            info.Version = "Valid XEX2 executable";
-        }
+        _xexReader.ReadMetadata(executablePath, info);
     }
 }

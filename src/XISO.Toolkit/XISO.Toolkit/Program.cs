@@ -24,6 +24,7 @@ var analyzer = new ImageAnalyzer();
 var game = analyzer.Analyze(folderPath);
 
 Console.WriteLine($"Title: {game.Title}");
+Console.WriteLine($"Title ID: {game.TitleId:X8}");
 Console.WriteLine($"Platform: {game.Platform}");
 Console.WriteLine($"Executable: {game.Executable}");
 Console.WriteLine($"Version: {game.Version}");
