@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/XISO.Core/XISO.Core/XISO.Core.csproj" />
+  <Project Path="src/XISO.OriginalXbox/XISO.OriginalXbox/XISO.OriginalXbox.csproj" />
+  <Project Path="src/XISO.Tools/XISO.Tools/XISO.Tools.csproj" />
+  <Project Path="src/XISO.Xbox360/XISO.Xbox360/XISO.Xbox360.csproj" />
+  <Project Path="src/XISO.Toolkit/XISO.Toolkit/XISO.Toolkit.csproj" />
+</Solution>
