@@ -39,5 +39,48 @@ public class XexReader
             BinaryPrimitives.ReadUInt32BigEndian(header[20..24]);
 
         info.Version = $"XEX optional headers: {optionalHeaderCount}";
+
+        var entry = new byte[8];
+
+        for (int i = 0; i < optionalHeaderCount; i++)
+        {
+            if (stream.Read(entry, 0, 8) != 8)
+                break;
+
+            uint headerValue =
+                System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(entry[0..4]);
+
+            uint value =
+                System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(entry[4..8]);
+
+            uint headerId = headerValue >> 8;
+
+            if (headerId == 0x000405)
+            {
+                stream.Position = 0x6C8;
+
+                byte[] executionId = new byte[24];
+
+                if (stream.Read(executionId, 0, 24) == 24)
+                {
+                    uint mediaId =
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(0, 4));
+
+                    uint version =
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(4, 4));
+
+                    uint baseVersion =
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(8, 4));
+
+                    uint titleId =
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(executionId.AsSpan(12, 4));
+
+                    info.TitleId = titleId.ToString("X8");
+
+                    info.Version =
+                        $"Media:{mediaId:X8} Version:{version:X8} Base:{baseVersion:X8}";
+                }
+            }
+        }
     }
 }
