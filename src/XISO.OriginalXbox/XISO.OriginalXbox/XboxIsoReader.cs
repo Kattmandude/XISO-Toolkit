@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using XISO.OriginalXbox.Xdvdfs;
 
 namespace XISO.OriginalXbox;
@@ -70,9 +70,116 @@ public sealed class XboxIsoReader : IDisposable
         return new XdvdfsVolumeDescriptor
         {
             Offset = descriptorOffset,
+            PartitionOffset = partitionOffset,
             RootDirectorySector = rootDirectorySector,
             RootDirectorySize = rootDirectorySize
         };
+    }
+
+    public XdvdfsDirectoryEntry ReadDirectoryEntry(uint dwordOffset)
+    {
+        long directoryOffset =
+            VolumeDescriptor.PartitionOffset +
+            ((long)VolumeDescriptor.RootDirectorySector * SectorSize);
+
+        long entryOffset =
+            directoryOffset +
+            ((long)dwordOffset * 4);
+
+        _stream.Position = entryOffset;
+
+        return ReadDirectoryEntryAtCurrentPosition();
+    }
+
+    public IReadOnlyList<XdvdfsDirectoryEntry> ReadRootDirectory()
+    {
+        var entries = new List<XdvdfsDirectoryEntry>();
+        var visited = new HashSet<uint>();
+        var pending = new Stack<uint>();
+
+        // The root directory entry is always at DWORD offset 0.
+        pending.Push(0);
+
+        while (pending.Count > 0)
+        {
+            uint dwordOffset = pending.Pop();
+
+            // Prevent malformed/cyclic directory trees from looping forever.
+            if (!visited.Add(dwordOffset))
+                continue;
+
+            long byteOffset =
+                (long)dwordOffset * 4;
+
+            if (byteOffset >= VolumeDescriptor.RootDirectorySize)
+            {
+                throw new InvalidDataException(
+                    $"Directory entry DWORD offset {dwordOffset} " +
+                    $"is outside the root directory.");
+            }
+
+            var entry = ReadDirectoryEntry(dwordOffset);
+
+            entries.Add(entry);
+
+            // XDVDFS directory pointers are DWORD offsets.
+            // A value of zero means there is no child pointer.
+            if (entry.Right != 0)
+                pending.Push(entry.Right);
+
+            if (entry.Left != 0)
+                pending.Push(entry.Left);
+        }
+
+        return entries;
+    }
+
+    private XdvdfsDirectoryEntry ReadDirectoryEntryAtCurrentPosition()
+    {
+        byte[] header = new byte[14];
+        ReadExactly(header);
+
+        ushort left =
+            BitConverter.ToUInt16(header, 0);
+
+        ushort right =
+            BitConverter.ToUInt16(header, 2);
+
+        uint startSector =
+            BitConverter.ToUInt32(header, 4);
+
+        uint fileSize =
+            BitConverter.ToUInt32(header, 8);
+
+        byte attributes = header[12];
+        byte nameLength = header[13];
+
+        byte[] nameBytes = new byte[nameLength];
+        ReadExactly(nameBytes);
+
+        string name =
+            Encoding.ASCII.GetString(nameBytes);
+
+        return new XdvdfsDirectoryEntry
+        {
+            Left = left,
+            Right = right,
+            StartSector = startSector,
+            FileSize = fileSize,
+            Attributes = attributes,
+            Name = name
+        };
+    }
+
+    private static int AlignToDword(int value)
+    {
+        return (value + 3) & ~3;
+    }
+
+    private static bool IsPadding(byte[] data, int offset)
+    {
+        return data[offset] == 0xFF ||
+               data[offset] == 0x00;
     }
 
     private long FindGamePartition()
