@@ -1,15 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\XISO.OriginalXbox\XISO.OriginalXbox\XISO.OriginalXbox.csproj" />
-    <ProjectReference Include="..\..\XISO.Tools\XISO.Tools\XISO.Tools.csproj" />
-    <ProjectReference Include="..\..\XISO.Xbox360\XISO.Xbox360\XISO.Xbox360.csproj" />
-  </ItemGroup>
-
 </Project>

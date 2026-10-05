@@ -1,4 +1,5 @@
 using System.Text;
+using XISO.Core.Detection;
 using XISO.OriginalXbox.Xdvdfs;
 
 namespace XISO.OriginalXbox;
@@ -134,6 +135,149 @@ public sealed class XboxIsoReader : IDisposable
         return entries;
     }
 
+    public XboxExecutableFormat DetectExecutableFormat()
+    {
+        var executable = FindDefaultExecutable();
+
+        if (executable is null)
+            return XboxExecutableFormat.Unknown;
+
+        byte[] header = ReadFilePrefix(executable, 4);
+
+        if (header.Length < 4)
+            return XboxExecutableFormat.Unknown;
+
+        if (header[0] == 0x58 &&
+            header[1] == 0x45 &&
+            header[2] == 0x58 &&
+            header[3] == 0x32)
+        {
+            return XboxExecutableFormat.Xex2;
+        }
+
+        if (header[0] == 0x58 &&
+            header[1] == 0x42 &&
+            header[2] == 0x45 &&
+            header[3] == 0x48)
+        {
+            return XboxExecutableFormat.Xbe;
+        }
+
+        return XboxExecutableFormat.Unknown;
+    }
+    public XboxPlatform DetectPlatform()
+    {
+        var executable = FindDefaultExecutable();
+
+        if (executable is null)
+            return XboxPlatform.Unknown;
+
+        if (string.Equals(
+            executable.Name,
+            "default.xbe",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return XboxPlatform.OriginalXbox;
+        }
+
+        if (string.Equals(
+            executable.Name,
+            "default.xex",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return XboxPlatform.Xbox360;
+        }
+
+        return XboxPlatform.Unknown;
+    }
+    public XdvdfsDirectoryEntry? FindDefaultExecutable()
+    {
+        var xbe = FindEntry("default.xbe");
+
+        if (xbe is not null)
+            return xbe;
+
+        return FindEntry("default.xex");
+    }
+    public byte[] ReadFilePrefix(
+        XdvdfsDirectoryEntry entry,
+        int byteCount)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        if (byteCount < 0)
+            throw new ArgumentOutOfRangeException(
+                nameof(byteCount),
+                "Byte count cannot be negative.");
+
+        int count = Math.Min(byteCount, (int)entry.FileSize);
+
+        long fileOffset =
+            VolumeDescriptor.PartitionOffset +
+            ((long)entry.StartSector * SectorSize);
+
+        long fileEnd =
+            fileOffset + count;
+
+        if (fileOffset < 0 || fileEnd > _stream.Length)
+        {
+            throw new InvalidDataException(
+                $"File '{entry.Name}' extends beyond the end of the ISO.");
+        }
+
+        _stream.Position = fileOffset;
+
+        byte[] data = new byte[count];
+
+        ReadExactly(data);
+
+        return data;
+    }
+    public byte[] ReadFile(XdvdfsDirectoryEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        long fileOffset =
+            VolumeDescriptor.PartitionOffset +
+            ((long)entry.StartSector * SectorSize);
+
+        long fileEnd =
+            fileOffset + entry.FileSize;
+
+        if (fileOffset < 0 || fileEnd > _stream.Length)
+        {
+            throw new InvalidDataException(
+                $"File '{entry.Name}' extends beyond the end of the ISO.");
+        }
+
+        _stream.Position = fileOffset;
+
+        byte[] data = new byte[entry.FileSize];
+
+        ReadExactly(data);
+
+        return data;
+    }
+    public XdvdfsDirectoryEntry? FindEntry(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException(
+                "Entry name cannot be empty.",
+                nameof(name));
+
+        foreach (var entry in ReadRootDirectory())
+        {
+            if (string.Equals(
+                entry.Name,
+                name,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
     private XdvdfsDirectoryEntry ReadDirectoryEntryAtCurrentPosition()
     {
         byte[] header = new byte[14];
