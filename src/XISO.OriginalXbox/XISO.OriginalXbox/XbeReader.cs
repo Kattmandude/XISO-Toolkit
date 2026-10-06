@@ -204,6 +204,25 @@ public sealed class XbeReader
                 checked((int)certificateOffset + 0xA0));
         }
     }
+    public string GameRegionDescription
+    {
+        get
+        {
+            uint region = GameRegion;
+
+            return region switch
+            {
+                0x00000001 => "North America",
+                0x00000002 => "Japan / Southeast Asia",
+                0x00000003 => "North America + Japan / Southeast Asia",
+                0x00000004 => "Europe / Australia / New Zealand",
+                0x00000005 => "North America + Europe / Australia / New Zealand",
+                0x00000007 => "All Regions",
+                0x80000000 => "Manufacturing",
+                _ => $"Unknown (0x{region:X8})"
+            };
+        }
+    }
 
     public uint DiskNumber
     {

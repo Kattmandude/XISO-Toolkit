@@ -135,6 +135,8 @@ public sealed class XboxGameImageAnalyzer
             result.XbeRegionMask =
                 xbeReader.GameRegion;
 
+            result.XbeRegion =
+                xbeReader.GameRegionDescription;
             result.AlternateTitleIds =
                 xbeReader.AlternateTitleIds;
 
@@ -147,6 +149,12 @@ public sealed class XboxGameImageAnalyzer
             result.Xmid =
                 xbeReader.Xmid;
 
+            result.XbeMd5 =
+                xbeReader.Md5;
+
+            result.AllowedMedia =
+                xbeReader.AllowedMedia;
+
             result.Version =
                 $"0x{xbeReader.Version:X8}";
 
@@ -158,6 +166,87 @@ public sealed class XboxGameImageAnalyzer
             {
                 result.ReleaseRegion =
                     release.Region;
+            }
+
+            if (string.Equals(
+                xbeReader.TitleName,
+                "CDX",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                var cdxInx =
+                    reader.EnumerateFiles()
+                        .FirstOrDefault(f =>
+                            f.RelativePath.Equals(
+                                "cdxmedia\\cdx.inx",
+                                StringComparison.OrdinalIgnoreCase));
+
+                if (cdxInx is not null)
+                {
+                    var cdxData =
+                        reader.ReadFile(cdxInx.Entry);
+
+                    var cdxDefinition =
+                        CdxDefinitionParser.Parse(cdxData);
+
+                    var cdxGames =
+                        new List<CdxGameInfo>();
+
+                    foreach (var menuItem in cdxDefinition.MenuItems)
+                    {
+                        var normalizedFileName =
+                            menuItem.FileName.Replace(
+                                '/',
+                                '\\');
+
+                        var gameFile =
+                            reader.EnumerateFiles()
+                                .FirstOrDefault(f =>
+                                    f.RelativePath.Equals(
+                                        normalizedFileName,
+                                        StringComparison.OrdinalIgnoreCase));
+
+                        if (gameFile is null)
+                        {
+                            continue;
+                        }
+
+                        var gameXbeData =
+                            reader.ReadFile(gameFile.Entry);
+
+                        var gameXbe =
+                            new XbeReader(gameXbeData);
+
+                        var gameInfo =
+                            new CdxGameInfo
+                            {
+                                DisplayName = menuItem.DisplayName,
+                                FileName = gameFile.RelativePath,
+                                Title = gameXbe.TitleName,
+                                TitleId = gameXbe.TitleId.ToString("X8"),
+                                SerialNumber = gameXbe.SerialNumber,
+                                Xmid = gameXbe.Xmid,
+                                XbeMd5 = gameXbe.Md5,
+                                XbeRegionMask = gameXbe.GameRegion,
+                                XbeRegion = gameXbe.GameRegionDescription,
+                                Version = $"0x{gameXbe.Version:X8}"
+                            };
+
+                        var gameRelease =
+                            _releaseDatabase.FindByXbeMd5(
+                                gameXbe.Md5);
+
+                        if (gameRelease is not null)
+                        {
+                            gameInfo.ReleaseRegion =
+                                gameRelease.Region;
+                        }
+
+                        cdxGames.Add(gameInfo);
+                    }
+
+                    result.CdxGames =
+                        cdxGames;
+                }
             }
         }
 
