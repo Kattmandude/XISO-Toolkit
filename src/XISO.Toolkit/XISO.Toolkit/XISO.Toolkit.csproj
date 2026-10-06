@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\XISO.Core\XISO.Core\XISO.Core.csproj" />
+    <ProjectReference Include="..\..\XISO.OriginalXbox\XISO.OriginalXbox\XISO.OriginalXbox.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,4 @@
+using XISO.Core.Data;
 using XISO.Core.Metadata;
 using XISO.Core.Models;
 
@@ -5,6 +6,44 @@ namespace XISO.OriginalXbox;
 
 public sealed class XboxGameImageAnalyzer
 {
+    private readonly IGameTitleProvider _titleProvider;
+    private readonly OriginalXboxReleaseDatabase _releaseDatabase;
+
+    public XboxGameImageAnalyzer()
+    {
+        string dataPath =
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Data");
+
+        _titleProvider =
+            new LocalGameTitleProvider(
+                Path.Combine(
+                    dataPath,
+                    "GameTitles.json"));
+
+        _releaseDatabase =
+            new OriginalXboxReleaseDatabase(
+                Path.Combine(
+                    dataPath,
+                    "XISO-OriginalXbox-Releases.db"));
+    }
+
+    public XboxGameImageAnalyzer(
+        IGameTitleProvider titleProvider)
+    {
+        ArgumentNullException.ThrowIfNull(titleProvider);
+
+        _titleProvider = titleProvider;
+
+        _releaseDatabase =
+            new OriginalXboxReleaseDatabase(
+                Path.Combine(
+                    AppContext.BaseDirectory,
+                    "Data",
+                    "XISO-OriginalXbox-Releases.db"));
+    }
+
     public GameImageInfo Analyze(string isoPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(isoPath);
@@ -16,7 +55,8 @@ public sealed class XboxGameImageAnalyzer
                 isoPath);
         }
 
-        using var reader = new XboxIsoReader(isoPath);
+        using var reader =
+            new XboxIsoReader(isoPath);
 
         var executable =
             reader.FindDefaultExecutable();
@@ -62,6 +102,63 @@ public sealed class XboxGameImageAnalyzer
 
             result.Version =
                 executionId.Version.ToString();
+
+            var lookup =
+                _titleProvider.Find(
+                    result.Platform,
+                    result.TitleId,
+                    result.MediaId);
+
+            if (lookup is not null)
+            {
+                result.Title =
+                    lookup.Title;
+
+                result.ReleaseRegion =
+                    lookup.Region;
+            }
+        }
+        else if (string.Equals(
+            executable.Name,
+            "default.xbe",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var xbeData =
+                reader.ReadFile(executable);
+
+            var xbeReader =
+                new XbeReader(xbeData);
+
+            result.TitleId =
+                xbeReader.TitleId.ToString("X8");
+
+            result.XbeRegionMask =
+                xbeReader.GameRegion;
+
+            result.AlternateTitleIds =
+                xbeReader.AlternateTitleIds;
+
+            result.Title =
+                xbeReader.TitleName;
+
+            result.SerialNumber =
+                xbeReader.SerialNumber;
+
+            result.Xmid =
+                xbeReader.Xmid;
+
+            result.Version =
+                $"0x{xbeReader.Version:X8}";
+
+            var release =
+                _releaseDatabase.FindByXbeMd5(
+                    xbeReader.Md5);
+
+            if (release is not null)
+            {
+                result.ReleaseRegion =
+                    release.Region;
+            }
         }
 
         return result;

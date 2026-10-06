@@ -1,5 +1,16 @@
 [
   {
+    "Platform": "OriginalXbox",
+    "TitleId": "55530019",
+    "Title": "Tom Clancy's Splinter Cell: Pandora Tomorrow",
+    "Releases": [
+      {
+        "MediaId": "",
+        "Region": "USA"
+      }
+    ]
+  },
+  {
     "Platform": "Xbox360",
     "TitleId": "54510835",
     "Title": "World of Outlaws: Sprint Cars",

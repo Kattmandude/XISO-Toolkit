@@ -1,5 +1,6 @@
-using XISO.Core.Analysis;
 using XISO.Core.Configuration;
+using XISO.Core.Detection;
+using XISO.OriginalXbox;
 
 Console.WriteLine("XISO Toolkit starting...");
 Console.WriteLine();
@@ -29,30 +30,57 @@ Console.WriteLine();
 if (args.Length == 0)
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("XISO.Toolkit.exe <game folder>");
+    Console.WriteLine("XISO.Toolkit.exe <ISO path>");
     return;
 }
 
-var folderPath = args[0];
+var isoPath = args[0];
 
-if (!Directory.Exists(folderPath))
+if (!File.Exists(isoPath))
 {
-    Console.WriteLine("Folder not found:");
-    Console.WriteLine(folderPath);
+    Console.WriteLine("ISO file not found:");
+    Console.WriteLine(isoPath);
     return;
 }
 
-var analyzer = new ImageAnalyzer();
+try
+{
+    var analyzer =
+        new XboxGameImageAnalyzer();
 
-var game = analyzer.Analyze(folderPath);
+    var game =
+        analyzer.Analyze(isoPath);
 
-Console.WriteLine($"Title: {game.Title}");
-Console.WriteLine($"Title ID: {game.TitleId:X8}");
-Console.WriteLine($"Platform: {game.Platform}");
-Console.WriteLine($"Executable: {game.Executable}");
-Console.WriteLine($"Version: {game.Version}");
-Console.WriteLine($"Size: {FormatSize(game.FileSize)}");
+    Console.WriteLine("Game Information:");
+    Console.WriteLine($"Title: {game.Title}");
+    Console.WriteLine($"Region: {game.ReleaseRegion}");
+    Console.WriteLine($"Title ID: {game.TitleId}");
+    Console.WriteLine(
+        $"Platform: {(game.Platform == XboxPlatform.OriginalXbox ? "Original Xbox" : game.Platform.ToString())}");
+    Console.WriteLine($"Executable: {game.Executable}");
 
+    if (game.Platform == XboxPlatform.Xbox360)
+    {
+        Console.WriteLine($"Media ID: {game.MediaId}");
+        Console.WriteLine($"Version: {game.Version}");
+    }
+    else if (game.Platform == XboxPlatform.OriginalXbox)
+    {
+        Console.WriteLine($"Serial: {game.SerialNumber}");
+        Console.WriteLine($"XMID: {game.Xmid}");
+        Console.WriteLine($"XBE Region Mask: 0x{game.XbeRegionMask:X8}");
+        Console.WriteLine($"Version: {game.Version}");
+    }
+
+    Console.WriteLine($"ISO: {game.FileName}");
+    Console.WriteLine($"Size: {FormatSize(game.FileSize)}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine();
+    Console.WriteLine("Analysis failed:");
+    Console.WriteLine(ex.Message);
+}
 
 static string FormatSize(long bytes)
 {

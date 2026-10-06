@@ -18,8 +18,12 @@ public class GameImageInfo
 
     public string TitleId { get; set; } = string.Empty;
     public string MediaId { get; set; } = string.Empty;
+    public string SerialNumber { get; set; } = string.Empty;
+    public string Xmid { get; set; } = string.Empty;
 
-    public string Region { get; set; } = string.Empty;
+    public uint XbeRegionMask { get; set; }
+    public IReadOnlyList<uint> AlternateTitleIds { get; set; } = Array.Empty<uint>();
+    public string ReleaseRegion { get; set; } = string.Empty;
 
     public string Version { get; set; } = string.Empty;
 }

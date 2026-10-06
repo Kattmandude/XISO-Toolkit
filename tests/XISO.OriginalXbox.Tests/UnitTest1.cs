@@ -1,5 +1,9 @@
+using Newtonsoft.Json.Linq;
+using System.Security.Cryptography;
 using System.Text;
+using XISO.Core.Detection;
 using XISO.OriginalXbox.Xdvdfs;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace XISO.OriginalXbox.Tests;
 
@@ -1168,5 +1172,167 @@ public class XboxIsoReaderTests
         data[offset + 1] = (byte)(value >> 16);
         data[offset + 2] = (byte)(value >> 8);
         data[offset + 3] = (byte)value;
+    }
+    [Fact]
+    public void ReadsMysteryOriginalXboxXbeHeader()
+    {
+        const string isoPath =
+            @"F:\Downloads\Some Random Game.iso";
+
+        using var reader =
+            new XboxIsoReader(isoPath);
+
+        var executable =
+            reader.FindDefaultExecutable();
+
+        Assert.NotNull(executable);
+        Assert.Equal(
+            "default.xbe",
+            executable.Name,
+            ignoreCase: true);
+
+        var xbeData =
+            reader.ReadFile(executable);
+
+        var xbeReader =
+            new XbeReader(xbeData);
+
+        Console.WriteLine("XBE Header:");
+
+        for (int offset = 0; offset < 0x200; offset += 16)
+        {
+            int length =
+                Math.Min(16, xbeData.Length - offset);
+
+            Console.WriteLine(
+                $"{offset:X8}  {Convert.ToHexString(xbeData, offset, length)}");
+        }
+
+        Console.WriteLine("XBE Certificate:");
+
+        uint certificateOffset =
+            xbeReader.CertificateAddress -
+            xbeReader.BaseAddress;
+
+        byte[] certificate =
+            xbeData[
+                checked((int)certificateOffset)..checked((int)certificateOffset + (int)xbeReader.CertificateSize)
+            ];
+
+        for (int offset = 0; offset < certificate.Length; offset += 16)
+        {
+            int length =
+                Math.Min(16, certificate.Length - offset);
+
+            Console.WriteLine(
+                $"{offset:X8}  {Convert.ToHexString(certificate, offset, length)}");
+        }
+
+        Assert.NotEqual(
+            0u,
+            xbeReader.BaseAddress);
+
+        Assert.NotEqual(
+            0u,
+            xbeReader.CertificateAddress);
+
+        Console.WriteLine(
+            $"XBE Base Address: 0x{xbeReader.BaseAddress:X8}");
+
+        Console.WriteLine(
+            $"XBE Certificate Address: 0x{xbeReader.CertificateAddress:X8}");
+
+        Console.WriteLine(
+            $"XBE Certificate Size: 0x{xbeReader.CertificateSize:X8}");
+
+        Console.WriteLine(
+            $"XBE Disk Number: {xbeReader.DiskNumber}");
+
+        Console.WriteLine(
+            $"XBE Version: 0x{xbeReader.Version:X8}");
+
+        Console.WriteLine(
+            $"XBE MD5: {xbeReader.Md5}");
+
+        Console.WriteLine(
+            $"XBE Title ID: 0x{xbeReader.TitleId:X8}");
+        Console.WriteLine(
+            $"XBE Allowed Media: 0x{xbeReader.AllowedMedia:X8}");
+        Console.WriteLine(
+            $"XBE Game Ratings: 0x{xbeReader.GameRatings:X8}");
+
+        Console.WriteLine("XBE Alternate Title IDs:");
+
+        for (int i = 0; i < xbeReader.AlternateTitleIds.Count; i++)
+        {
+            Console.WriteLine(
+                $"  [{i}] 0x{xbeReader.AlternateTitleIds[i]:X8}");
+        }
+
+        Console.WriteLine(
+            $"XBE Title Name: {xbeReader.TitleName}");
+
+        Console.WriteLine(
+            $"XBE Game Region: 0x{xbeReader.GameRegion:X8}");
+    }
+    [Fact]
+    public void LooksUpOriginalXboxReleaseByXbeMd5()
+    {
+        const string databasePath =
+            @"F:\Projects\XISO-Toolkit\.xdb-inspect\XISO-OriginalXbox-Releases.db";
+
+        const string xbeMd5 =
+            "A997EA4883A016BC26B63D9035FF56AA";
+
+        var database =
+            new OriginalXboxReleaseDatabase(databasePath);
+
+        var release =
+            database.FindByXbeMd5(xbeMd5);
+
+        Assert.NotNull(release);
+
+        Assert.Equal(
+            "4553001A",
+            release.TitleId);
+
+        Assert.Equal(
+            "ES-026",
+            release.SerialNumber);
+
+        Assert.Equal(
+            "ES02609E",
+            release.Xmid);
+
+        Assert.Equal(
+            "L'Entraîneur 5: Saison 04/05",
+            release.FullName);
+
+        Assert.Equal(
+            "L'entraineur 5",
+            release.TitleName);
+
+        Assert.Equal(
+            "(4) PAL",
+            release.Region);
+
+        Assert.Equal(
+            "0x00000009",
+            release.Version);
+
+        Console.WriteLine(
+            $"Release: {release.FullName}");
+
+        Console.WriteLine(
+            $"Region: {release.Region}");
+
+        Console.WriteLine(
+            $"Serial: {release.SerialNumber}");
+
+        Console.WriteLine(
+            $"XMID: {release.Xmid}");
+
+        Console.WriteLine(
+            $"Version: {release.Version}");
     }
 }
