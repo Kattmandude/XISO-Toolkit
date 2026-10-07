@@ -1,5 +1,6 @@
 using XISO.Core.Configuration;
 using XISO.Core.Detection;
+using XISO.Core.Models;
 using XISO.OriginalXbox;
 
 Console.WriteLine("XISO Toolkit starting...");
@@ -57,7 +58,6 @@ try
 
     Console.WriteLine("Game Information:");
     Console.WriteLine($"Title: {game.Title}");
-    Console.WriteLine($"Region: {game.ReleaseRegion}");
     Console.WriteLine($"Title ID: {game.TitleId}");
     Console.WriteLine(
         $"Platform: {(game.Platform == XboxPlatform.OriginalXbox ? "Original Xbox" : game.Platform.ToString())}");
@@ -66,25 +66,53 @@ try
     if (game.Platform == XboxPlatform.Xbox360)
     {
         Console.WriteLine($"Media ID: {game.MediaId}");
-        Console.WriteLine($"Version: {game.Version}");
+        Console.WriteLine($"XBE Title Version: {game.Version}");
     }
     else if (game.Platform == XboxPlatform.OriginalXbox)
     {
         Console.WriteLine($"Serial: {game.SerialNumber}");
         Console.WriteLine($"XMID: {game.Xmid}");
         Console.WriteLine($"XBE MD5: {game.XbeMd5}");
-        var alternateTitleIds = game.AlternateTitleIds.Where(id => id != 0).ToList();
-        if (alternateTitleIds.Count > 0) {
+
+        var alternateTitleIds =
+            game.AlternateTitleIds
+                .Where(id => id != 0)
+                .ToList();
+
+        if (alternateTitleIds.Count > 0)
+        {
             Console.WriteLine("Alternate Title IDs:");
-            foreach (var alternateTitleId in alternateTitleIds) {
+
+            foreach (var alternateTitleId in alternateTitleIds)
+            {
                 Console.WriteLine($"  0x{alternateTitleId:X8}");
             }
         }
-        Console.WriteLine($"XBE Region Mask: 0x{game.XbeRegionMask:X8}");
+
         Console.WriteLine($"XBE Region: {game.XbeRegion}");
         Console.WriteLine($"Allowed Media: 0x{game.AllowedMedia:X8}");
+
         PrintXbeAllowedMedia(game.AllowedMedia);
-        Console.WriteLine($"Version: {game.Version}");
+
+        Console.WriteLine($"XBE Title Version: {game.Version}");
+        Console.WriteLine($"XBE Header Size: {FormatSize(game.XbeSizeOfHeaders)}");
+        Console.WriteLine($"XBE Image Size: {FormatSize(game.XbeSizeOfImage)}");
+        Console.WriteLine($"XBE Build Date: {FormatXbeTimestamp(game.XbeTimeDate)}");
+        Console.WriteLine($"XBE Sections: {game.XbeNumberOfSections}");
+
+        Console.WriteLine("XBE Init Flags:");
+
+        foreach (string line in FormatXbeInitFlags(game.XbeInitFlags).Split(Environment.NewLine))
+        {
+            Console.WriteLine($"  {line}");
+        }
+
+        Console.WriteLine($"XBE Library Version Count: {game.XbeLibraryVersionCount}");
+
+        PrintXbeLibraries(
+            game.XbeLibraryVersions,
+            "");
+
         if (game.CdxGames.Count > 0)
         {
             Console.WriteLine();
@@ -99,14 +127,28 @@ try
                 Console.WriteLine($"    Serial: {cdxGame.SerialNumber}");
                 Console.WriteLine($"    XMID: {cdxGame.Xmid}");
                 Console.WriteLine($"    XBE MD5: {cdxGame.XbeMd5}");
-                Console.WriteLine($"    XBE Region Mask: 0x{cdxGame.XbeRegionMask:X8}");
                 Console.WriteLine($"    XBE Region: {cdxGame.XbeRegion}");
-                Console.WriteLine($"    XBE Certificate Version: {cdxGame.Version}");
+                Console.WriteLine($"    XBE Title Version: {cdxGame.Version}");
+                Console.WriteLine($"    XBE Header Size: {FormatSize(cdxGame.XbeSizeOfHeaders)}");
+                Console.WriteLine($"    XBE Image Size: {FormatSize(cdxGame.XbeSizeOfImage)}");
+                Console.WriteLine($"    XBE Build Date: {FormatXbeTimestamp(cdxGame.XbeTimeDate)}");
+                Console.WriteLine($"    XBE Sections: {cdxGame.XbeNumberOfSections}");
+
+                Console.WriteLine("    XBE Init Flags:");
+
+                foreach (string line in FormatXbeInitFlags(cdxGame.XbeInitFlags).Split(Environment.NewLine))
+                {
+                    Console.WriteLine($"      {line}");
+                }
+
+                Console.WriteLine($"    XBE Library Version Count: {cdxGame.XbeLibraryVersionCount}");
+
+                PrintXbeLibraries(
+                    cdxGame.XbeLibraryVersions,
+                    "    ");
             }
         }
     }
-
-
 }
 catch (Exception ex)
 {
@@ -140,6 +182,113 @@ static string FormatSize(long bytes)
 }
 
 
+static string FormatXbeInitFlags(uint flags)
+{
+    var descriptions = new List<string>();
+
+    const uint MountUtilityDrive = 0x00000001;
+    const uint FormatUtilityDrive = 0x00000002;
+    const uint Limit64Megabytes = 0x00000004;
+    const uint DontSetupHardDisk = 0x00000008;
+    const uint DontModifyHardDisk = 0x00000010;
+    const uint UtilityDriveClusterSizeMask = 0xC0000000;
+
+    if ((flags & MountUtilityDrive) != 0)
+        descriptions.Add("Mount utility drive");
+
+    if ((flags & FormatUtilityDrive) != 0)
+        descriptions.Add("Format utility drive");
+
+    if ((flags & Limit64Megabytes) != 0)
+        descriptions.Add("Limit development kit runtime memory to 64 MB");
+
+    if ((flags & DontSetupHardDisk) != 0)
+        descriptions.Add("Don't set up hard disk");
+
+    if ((flags & DontModifyHardDisk) != 0)
+        descriptions.Add("Don't modify hard disk");
+
+    uint clusterSize = flags & UtilityDriveClusterSizeMask;
+
+    switch (clusterSize)
+    {
+
+        case 0x40000000:
+            descriptions.Add("Utility drive cluster size: 32 KB");
+            break;
+
+        case 0x80000000:
+            descriptions.Add("Utility drive cluster size: 64 KB");
+            break;
+
+        case 0xC0000000:
+            descriptions.Add("Utility drive cluster size: 128 KB");
+            break;
+    }
+
+    const uint KnownFlags =
+        MountUtilityDrive |
+        FormatUtilityDrive |
+        Limit64Megabytes |
+        DontSetupHardDisk |
+        DontModifyHardDisk |
+        UtilityDriveClusterSizeMask;
+
+    uint unknownFlags = flags & ~KnownFlags;
+
+    if (unknownFlags != 0)
+        descriptions.Add($"Unknown flags: 0x{unknownFlags:X8}");
+
+    if (descriptions.Count == 0)
+        return "None";
+
+    return string.Join(Environment.NewLine, descriptions);
+}
+static string FormatXbeTimestamp(uint timestamp)
+{
+    DateTimeOffset dateTime =
+        DateTimeOffset.FromUnixTimeSeconds(timestamp);
+
+    return dateTime
+        .ToUniversalTime()
+        .ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+}
+static void PrintXbeLibraries(
+    IReadOnlyList<XbeLibraryVersion> libraries,
+    string indent)
+{
+    Console.WriteLine($"{indent}XBE Library Versions:");
+
+    foreach (var library in libraries)
+    {
+        ushort qfeVersion =
+            (ushort)(library.Flags & 0x1FFF);
+
+        ushort approval =
+            (ushort)((library.Flags >> 13) & 0x03);
+
+        bool debugBuild =
+            (library.Flags & 0x8000) != 0;
+
+        string approvalDescription =
+            approval switch
+            {
+                0 => "Unapproved",
+                1 => "Possibly Approved",
+                2 => "Approved",
+                _ => "Unknown"
+            };
+
+        string buildType =
+            debugBuild
+                ? "Debug"
+                : "Retail";
+
+        Console.WriteLine(
+            $"{indent}  {library.Name} {library.MajorVersion}.{library.MinorVersion}.{library.BuildVersion} " +
+            $"(QFE Version: {qfeVersion}, {buildType}, {approvalDescription}, Flags: 0x{library.Flags:X4})");
+    }
+}
 static void PrintXbeAllowedMedia(uint media)
 {
     var documented = new (uint Flag, string Name)[]
@@ -185,3 +334,18 @@ static void PrintXbeAllowedMedia(uint media)
     if (undocumented != 0)
         Console.WriteLine($"Undocumented Media Bits: 0x{undocumented:X8}");
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

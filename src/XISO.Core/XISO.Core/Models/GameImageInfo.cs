@@ -21,6 +21,15 @@ public class GameImageInfo
     public string SerialNumber { get; set; } = string.Empty;
     public string Xmid { get; set; } = string.Empty;
     public string XbeMd5 { get; set; } = string.Empty;
+    public uint XbeSizeOfHeaders { get; set; }
+    public uint XbeSizeOfImage { get; set; }
+    public uint XbeTimeDate { get; set; }
+    public uint XbeNumberOfSections { get; set; }
+    public uint XbeInitFlags { get; set; }
+    public uint XbeLibraryVersionCount { get; set; }
+    public uint XbeLibraryVersionsAddress { get; set; }
+    public IReadOnlyList<XbeLibraryVersion> XbeLibraryVersions { get; set; } =
+        Array.Empty<XbeLibraryVersion>();
 
     public uint XbeRegionMask { get; set; }
     public uint AllowedMedia { get; set; }
@@ -33,3 +42,4 @@ public class GameImageInfo
     public IReadOnlyList<CdxGameInfo> CdxGames { get; set; } =
         Array.Empty<CdxGameInfo>();
 }
+

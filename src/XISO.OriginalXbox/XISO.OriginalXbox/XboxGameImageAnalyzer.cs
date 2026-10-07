@@ -151,6 +151,29 @@ public sealed class XboxGameImageAnalyzer
 
             result.XbeMd5 =
                 xbeReader.Md5;
+result.XbeSizeOfHeaders =
+    xbeReader.SizeOfHeaders;
+
+result.XbeSizeOfImage =
+    xbeReader.SizeOfImage;
+
+result.XbeTimeDate =
+    xbeReader.TimeDate;
+
+result.XbeNumberOfSections =
+    xbeReader.NumberOfSections;
+
+result.XbeInitFlags =
+    xbeReader.InitFlags;
+
+result.XbeLibraryVersionCount =
+    xbeReader.LibraryVersionCount;
+
+result.XbeLibraryVersionsAddress =
+    xbeReader.LibraryVersionsAddress;
+
+            result.XbeLibraryVersions =
+                xbeReader.LibraryVersions;
 
             result.AllowedMedia =
                 xbeReader.AllowedMedia;
@@ -228,7 +251,15 @@ public sealed class XboxGameImageAnalyzer
                                 XbeMd5 = gameXbe.Md5,
                                 XbeRegionMask = gameXbe.GameRegion,
                                 XbeRegion = gameXbe.GameRegionDescription,
-                                Version = $"0x{gameXbe.Version:X8}"
+                                Version = $"0x{gameXbe.Version:X8}",
+                                XbeSizeOfHeaders = gameXbe.SizeOfHeaders,
+                                XbeSizeOfImage = gameXbe.SizeOfImage,
+                                XbeTimeDate = gameXbe.TimeDate,
+                                XbeNumberOfSections = gameXbe.NumberOfSections,
+                                XbeInitFlags = gameXbe.InitFlags,
+                                XbeLibraryVersionCount = gameXbe.LibraryVersionCount,
+                                XbeLibraryVersionsAddress = gameXbe.LibraryVersionsAddress,
+                                XbeLibraryVersions = gameXbe.LibraryVersions
                             };
 
                         var gameRelease =
@@ -253,3 +284,6 @@ public sealed class XboxGameImageAnalyzer
         return result;
     }
 }
+
+
+
