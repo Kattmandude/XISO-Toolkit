@@ -85,7 +85,7 @@ try
 
             foreach (var alternateTitleId in alternateTitleIds)
             {
-                Console.WriteLine($"  0x{alternateTitleId:X8}");
+                Console.WriteLine($"  {alternateTitleId:X8}");
             }
         }
 
@@ -334,18 +334,3 @@ static void PrintXbeAllowedMedia(uint media)
     if (undocumented != 0)
         Console.WriteLine($"Undocumented Media Bits: 0x{undocumented:X8}");
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
