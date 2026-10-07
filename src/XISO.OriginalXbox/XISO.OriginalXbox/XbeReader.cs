@@ -256,7 +256,7 @@ public sealed class XbeReader
 
             return ReadUInt32LittleEndian(
                 _data,
-                checked((int)certificateOffset + 0x04));
+                checked((int)certificateOffset + 0x9C));
         }
     }
 
