@@ -12,3 +12,17 @@ obj/
 *.dll
 *.exe
 *.pdb
+# Local database inspection / downloaded database
+.xdb-inspect/
+
+# PowerShell backup files
+*.bak
+*.bak-*
+*.bak_*
+
+# Local backup directories
+**/bak/
+
+# Local generated/random-selection helper
+Run XISO Toolkit (Random Selection).ps1
+
