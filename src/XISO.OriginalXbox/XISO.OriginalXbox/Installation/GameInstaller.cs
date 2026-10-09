@@ -1,13 +1,13 @@
 
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using XISO.Core.Installation;
 using XISO.Core.Models;
+using XISOSharp;
+using XISOSharp.Models;
 
 namespace XISO.OriginalXbox.Installation;
 
@@ -144,9 +144,7 @@ public sealed class GameInstaller : IGameInstaller
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        string destination = Path.GetFullPath(
-            request.DestinationFolder);
-
+        string destination = Path.GetFullPath(request.DestinationFolder);
         string? parent = Path.GetDirectoryName(destination);
 
         if (request.Method == InstallationMethod.MoveIsoImage)
@@ -191,7 +189,6 @@ public sealed class GameInstaller : IGameInstaller
         IProgress<InstallationProgress>? progress,
         CancellationToken cancellationToken)
     {
-        string executable = FindExtractXiso();
         string parent = Path.GetDirectoryName(destination)!;
 
         string staging = Path.Combine(
@@ -206,91 +203,129 @@ public sealed class GameInstaller : IGameInstaller
 
             Report(
                 progress,
-                "Extracting game contents",
-                "extract-xiso is extracting files into a temporary staging folder.",
-                null);
+                "Analyzing game contents",
+                "Counting files and calculating the total extraction size.",
+                0);
 
-            using var process = new Process
+            long totalBytes;
+
+            using (var imageStream = new FileStream(
+                imagePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                CopyBufferSize,
+                FileOptions.RandomAccess))
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = executable,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                    WorkingDirectory = Path.GetDirectoryName(executable)!
-                }
-            };
-
-            process.StartInfo.ArgumentList.Add("-x");
-            process.StartInfo.ArgumentList.Add("-d");
-            process.StartInfo.ArgumentList.Add(staging);
-            process.StartInfo.ArgumentList.Add(imagePath);
-
-            if (!process.Start())
-            {
-                throw new InvalidOperationException(
-                    "Could not start extract-xiso.exe.");
+                totalBytes = GetTotalFileBytes(
+                    imageStream,
+                    imagePath,
+                    cancellationToken);
             }
 
-            // Drain both redirected streams while the process runs so
-            // a full output pipe cannot block the extraction process.
-            Task<string> stdoutTask =
-                process.StandardOutput.ReadToEndAsync();
+            cancellationToken.ThrowIfCancellationRequested();
 
-            Task<string> stderrTask =
-                process.StandardError.ReadToEndAsync();
+            Report(
+                progress,
+                "Extracting game contents",
+                $"Extracting {FormatBytes(totalBytes)} of game data.",
+                0);
+
+            var byteCountsByPath = new Dictionary<string, long>(
+                StringComparer.OrdinalIgnoreCase);
+
+            long completedBytes = 0;
+
+            var extractionProgress = new InlineProgress<ProgressInfo>(
+                info =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (info.Type is not ProgressInfoType.FileProgress
+                        and not ProgressInfoType.FileAdded)
+                    {
+                        return;
+                    }
+
+                    string path = info.Path ?? string.Empty;
+
+                    long reportedBytes = info.Size;
+
+                    if (reportedBytes < 0)
+                    {
+                        reportedBytes = 0;
+                    }
+
+                    byteCountsByPath.TryGetValue(
+                        path,
+                        out long previousBytes);
+
+                    long newBytes = Math.Max(previousBytes, reportedBytes);
+
+                    if (newBytes > previousBytes)
+                    {
+                        completedBytes += newBytes - previousBytes;
+                        byteCountsByPath[path] = newBytes;
+                    }
+
+                    int percent = GetPercent(completedBytes, totalBytes);
+
+                    Report(
+                        progress,
+                        "Extracting game contents",
+                        string.IsNullOrWhiteSpace(path)
+                            ? $"Extracted {FormatBytes(completedBytes)} of {FormatBytes(totalBytes)}"
+                            : $"Extracting {path} — {FormatBytes(completedBytes)} of {FormatBytes(totalBytes)}",
+                        Math.Min(percent, 99));
+                });
+
+            int result;
+
+            TextWriter originalOut = Console.Out;
+            TextWriter originalError = Console.Error;
 
             try
             {
-                while (!process.WaitForExit(200))
+                Console.SetOut(TextWriter.Null);
+                Console.SetError(TextWriter.Null);
+
+                using (var imageStream = new FileStream(
+                    imagePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    CopyBufferSize,
+                    FileOptions.RandomAccess))
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            process.Kill(entireProcessTree: true);
-                        }
-                        catch (InvalidOperationException)
-                        {
-                            // The process may have exited just before Kill.
-                        }
-                        catch (System.ComponentModel.Win32Exception)
-                        {
-                            // Continue to wait and clean up if it has exited.
-                        }
-
-                        process.WaitForExit();
-
-                        cancellationToken.ThrowIfCancellationRequested();
-                    }
+                    result = XisoReader.UnpackImage(
+                        imageStream,
+                        Path.GetFileName(imagePath),
+                        staging,
+                        cancellationToken,
+                        null,
+                        null,
+                        extractionProgress);
                 }
-
-                cancellationToken.ThrowIfCancellationRequested();
             }
             finally
             {
-                // Ensure process output has been fully collected.
-                Task.WaitAll(stdoutTask, stderrTask);
+                Console.SetOut(originalOut);
+                Console.SetError(originalError);
             }
 
-            string stdout = stdoutTask.GetAwaiter().GetResult();
-            string stderr = stderrTask.GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
 
-            if (process.ExitCode != 0)
+            if (result != 0)
             {
                 throw new InvalidDataException(
-                    $"extract-xiso failed with exit code {process.ExitCode}." +
-                    FormatProcessOutput(stdout, stderr));
+                    $"XISOSharp failed to extract the image (return code {result}).");
             }
 
             if (!Directory.EnumerateFileSystemEntries(
                     staging, "*", SearchOption.AllDirectories).Any())
             {
                 throw new InvalidDataException(
-                    "extract-xiso reported success, but extracted no files." +
-                    FormatProcessOutput(stdout, stderr));
+                    "XISOSharp reported success, but extracted no files.");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -305,7 +340,7 @@ public sealed class GameInstaller : IGameInstaller
                 progress,
                 "Finalizing installation",
                 "Extraction completed. Moving the staged game files into the destination.",
-                100);
+                99);
 
             Directory.Move(staging, destination);
 
@@ -321,6 +356,46 @@ public sealed class GameInstaller : IGameInstaller
         {
             TryDeleteDirectory(staging);
         }
+    }
+
+    private static long GetTotalFileBytes(
+        Stream imageStream,
+        string imageName,
+        CancellationToken cancellationToken)
+    {
+        long totalBytes = 0;
+
+        void Walk(string directory)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (EntryInfo entry in XisoReader.ListDirectory(
+                imageStream,
+                imageName,
+                directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string path = directory == "/"
+                    ? "/" + entry.Name
+                    : directory + "/" + entry.Name;
+
+                if (entry.IsDirectory)
+                {
+                    Walk(path);
+                }
+                else
+                {
+                    totalBytes += entry.FileSize;
+                }
+            }
+        }
+
+        imageStream.Position = 0;
+        Walk("/");
+        imageStream.Position = 0;
+
+        return totalBytes;
     }
 
     private static string KeepImageInNewFolder(
@@ -500,7 +575,7 @@ public sealed class GameInstaller : IGameInstaller
     private static int GetPercent(long completed, long total)
     {
         if (total <= 0)
-            return 100;
+            return 0;
 
         return (int)Math.Clamp(
             completed * 100.0 / total,
@@ -530,40 +605,6 @@ public sealed class GameInstaller : IGameInstaller
             percent));
     }
 
-    private static string FindExtractXiso()
-    {
-        string relativePath =
-            Path.Combine("tools", "extract-xiso", "extract-xiso.exe");
-
-        string? directory = AppContext.BaseDirectory;
-
-        while (!string.IsNullOrWhiteSpace(directory))
-        {
-            string candidate = Path.Combine(directory, relativePath);
-
-            if (File.Exists(candidate))
-                return candidate;
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        directory = Environment.CurrentDirectory;
-
-        while (!string.IsNullOrWhiteSpace(directory))
-        {
-            string candidate = Path.Combine(directory, relativePath);
-
-            if (File.Exists(candidate))
-                return candidate;
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new FileNotFoundException(
-            "Could not locate tools\\extract-xiso\\extract-xiso.exe. " +
-            "Expected it under the XISO Toolkit solution or application directory.");
-    }
-
     private static string GetSafeImageFileName(string imageName)
     {
         string name = Path.GetFileName(imageName);
@@ -589,21 +630,6 @@ public sealed class GameInstaller : IGameInstaller
         return name;
     }
 
-    private static string FormatProcessOutput(
-        string stdout,
-        string stderr)
-    {
-        var result = new StringBuilder();
-
-        if (!string.IsNullOrWhiteSpace(stderr))
-            result.AppendLine().AppendLine(stderr.Trim());
-
-        if (!string.IsNullOrWhiteSpace(stdout))
-            result.AppendLine().AppendLine(stdout.Trim());
-
-        return result.ToString();
-    }
-
     private static void TryDeleteFile(string path)
     {
         try
@@ -627,6 +653,21 @@ public sealed class GameInstaller : IGameInstaller
         catch
         {
             // Best-effort cleanup; do not mask the original exception.
+        }
+    }
+
+    private sealed class InlineProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public InlineProgress(Action<T> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(T value)
+        {
+            _handler(value);
         }
     }
 }

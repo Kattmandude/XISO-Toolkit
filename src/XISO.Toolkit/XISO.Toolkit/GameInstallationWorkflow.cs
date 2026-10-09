@@ -64,6 +64,12 @@ public static class GameInstallationWorkflow
                 archiveSource.ImageStream,
                 archiveSource.ImageName,
                 archiveSource.ImageLength);
+
+            Console.WriteLine();
+
+            Program.PrintGameInformation(game);
+
+            Console.WriteLine();
         }
         catch (Exception ex)
         {
