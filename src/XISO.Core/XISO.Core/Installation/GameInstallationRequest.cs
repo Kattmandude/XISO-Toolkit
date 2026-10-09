@@ -11,4 +11,6 @@ public sealed class GameInstallationRequest
     public InstallationMethod Method { get; init; }
 
     public string IsoFileName { get; init; } = string.Empty;
+
+    public bool CreateGameFolderForImage { get; init; } = true;
 }

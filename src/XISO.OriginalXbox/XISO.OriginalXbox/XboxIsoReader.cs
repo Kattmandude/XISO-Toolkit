@@ -1,3 +1,4 @@
+
 using System.Text;
 using XISO.Core.Detection;
 using XISO.OriginalXbox.Xdvdfs;
@@ -8,10 +9,19 @@ public sealed class XboxIsoReader : IDisposable
 {
     private const int SectorSize = 2048;
     private const long DescriptorOffsetFromPartition = 0x10000;
-    private const long StandardGamePartitionOffset = 0x0FD90000;
     private const string VolumeSignature = "MICROSOFT*XBOX*MEDIA";
 
-    private readonly FileStream _stream;
+    private static readonly long[] GamePartitionOffsets =
+    [
+        0x00000000,
+        0x02080000,
+        0x0FD90000,
+        0x18300000
+    ];
+
+    private readonly Stream _stream;
+    private readonly bool _leaveOpen;
+    private bool _disposed;
 
     public string IsoPath { get; }
 
@@ -20,10 +30,14 @@ public sealed class XboxIsoReader : IDisposable
     public XboxIsoReader(string isoPath)
     {
         if (string.IsNullOrWhiteSpace(isoPath))
-            throw new ArgumentException("ISO path cannot be empty.", nameof(isoPath));
+            throw new ArgumentException(
+                "ISO path cannot be empty.",
+                nameof(isoPath));
 
         if (!File.Exists(isoPath))
-            throw new FileNotFoundException("ISO file was not found.", isoPath);
+            throw new FileNotFoundException(
+                "ISO file was not found.",
+                isoPath);
 
         IsoPath = Path.GetFullPath(isoPath);
 
@@ -33,7 +47,56 @@ public sealed class XboxIsoReader : IDisposable
             FileAccess.Read,
             FileShare.Read);
 
-        VolumeDescriptor = ReadVolumeDescriptor();
+        _leaveOpen = false;
+
+        try
+        {
+            VolumeDescriptor = ReadVolumeDescriptor();
+        }
+        catch
+        {
+            _stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Reads an Xbox ISO from an existing seekable stream.
+    /// Set leaveOpen to true when the caller owns the stream.
+    /// </summary>
+    public XboxIsoReader(
+        Stream stream,
+        string imageName = "Xbox image",
+        bool leaveOpen = false)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        if (!stream.CanRead)
+            throw new ArgumentException(
+                "The image stream must be readable.",
+                nameof(stream));
+
+        if (!stream.CanSeek)
+            throw new ArgumentException(
+                "The image stream must support seeking.",
+                nameof(stream));
+
+        _stream = stream;
+        _leaveOpen = leaveOpen;
+        IsoPath = imageName;
+
+        try
+        {
+            _stream.Position = 0;
+            VolumeDescriptor = ReadVolumeDescriptor();
+        }
+        catch
+        {
+            if (!_leaveOpen)
+                _stream.Dispose();
+
+            throw;
+        }
     }
 
     private XdvdfsVolumeDescriptor ReadVolumeDescriptor()
@@ -46,7 +109,6 @@ public sealed class XboxIsoReader : IDisposable
         _stream.Position = descriptorOffset;
 
         byte[] signatureBytes = new byte[VolumeSignature.Length];
-
         ReadExactly(signatureBytes);
 
         string signature = Encoding.ASCII.GetString(signatureBytes);
@@ -54,7 +116,8 @@ public sealed class XboxIsoReader : IDisposable
         if (signature != VolumeSignature)
         {
             throw new InvalidDataException(
-                $"Invalid XDVDFS volume signature at 0x{descriptorOffset:X8}: '{signature}'.");
+                $"Invalid XDVDFS volume signature at " +
+                $"0x{descriptorOffset:X8}: '{signature}'.");
         }
 
         _stream.Position = descriptorOffset + 0x14;
@@ -84,8 +147,7 @@ public sealed class XboxIsoReader : IDisposable
             ((long)VolumeDescriptor.RootDirectorySector * SectorSize);
 
         long entryOffset =
-            directoryOffset +
-            ((long)dwordOffset * 4);
+            directoryOffset + ((long)dwordOffset * 4);
 
         _stream.Position = entryOffset;
 
@@ -98,33 +160,27 @@ public sealed class XboxIsoReader : IDisposable
         var visited = new HashSet<uint>();
         var pending = new Stack<uint>();
 
-        // The root directory entry is always at DWORD offset 0.
         pending.Push(0);
 
         while (pending.Count > 0)
         {
             uint dwordOffset = pending.Pop();
 
-            // Prevent malformed/cyclic directory trees from looping forever.
             if (!visited.Add(dwordOffset))
                 continue;
 
-            long byteOffset =
-                (long)dwordOffset * 4;
+            long byteOffset = (long)dwordOffset * 4;
 
             if (byteOffset >= VolumeDescriptor.RootDirectorySize)
             {
                 throw new InvalidDataException(
                     $"Directory entry DWORD offset {dwordOffset} " +
-                    $"is outside the root directory.");
+                    "is outside the root directory.");
             }
 
             var entry = ReadDirectoryEntry(dwordOffset);
-
             entries.Add(entry);
 
-            // XDVDFS directory pointers are DWORD offsets.
-            // A value of zero means there is no child pointer.
             if (entry.Right != 0)
                 pending.Push(entry.Right);
 
@@ -165,6 +221,7 @@ public sealed class XboxIsoReader : IDisposable
 
         return XboxExecutableFormat.Unknown;
     }
+
     public XboxPlatform DetectPlatform()
     {
         var executable = FindDefaultExecutable();
@@ -190,15 +247,53 @@ public sealed class XboxIsoReader : IDisposable
 
         return XboxPlatform.Unknown;
     }
+
+    /// <summary>
+    /// Checks the root directory first. If neither default executable is
+    /// there, searches subdirectories for default.xbe, then default.xex.
+    /// </summary>
     public XdvdfsDirectoryEntry? FindDefaultExecutable()
     {
+        // Preserve root priority and the existing preference for XBE.
         var xbe = FindEntry("default.xbe");
 
         if (xbe is not null)
             return xbe;
 
-        return FindEntry("default.xex");
+        var xex = FindEntry("default.xex");
+
+        if (xex is not null)
+            return xex;
+
+        // Neither executable exists in the root. Search recursively.
+        var files = EnumerateFiles();
+
+        var nestedXbe = files.FirstOrDefault(file =>
+            !string.Equals(
+                file.RelativePath,
+                file.Entry.Name,
+                StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                file.Entry.Name,
+                "default.xbe",
+                StringComparison.OrdinalIgnoreCase));
+
+        if (nestedXbe is not null)
+            return nestedXbe.Entry;
+
+        var nestedXex = files.FirstOrDefault(file =>
+            !string.Equals(
+                file.RelativePath,
+                file.Entry.Name,
+                StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                file.Entry.Name,
+                "default.xex",
+                StringComparison.OrdinalIgnoreCase));
+
+        return nestedXex?.Entry;
     }
+
     public byte[] ReadFilePrefix(
         XdvdfsDirectoryEntry entry,
         int byteCount)
@@ -206,33 +301,34 @@ public sealed class XboxIsoReader : IDisposable
         ArgumentNullException.ThrowIfNull(entry);
 
         if (byteCount < 0)
+        {
             throw new ArgumentOutOfRangeException(
                 nameof(byteCount),
                 "Byte count cannot be negative.");
+        }
 
-        int count = Math.Min(byteCount, (int)entry.FileSize);
+        int count = (int)Math.Min(byteCount, (long)entry.FileSize);
 
         long fileOffset =
             VolumeDescriptor.PartitionOffset +
             ((long)entry.StartSector * SectorSize);
 
-        long fileEnd =
-            fileOffset + count;
+        long fileEnd = checked(fileOffset + count);
 
         if (fileOffset < 0 || fileEnd > _stream.Length)
         {
             throw new InvalidDataException(
-                $"File '{entry.Name}' extends beyond the end of the ISO.");
+                $"File '{entry.Name}' extends beyond the end of the image.");
         }
 
         _stream.Position = fileOffset;
 
         byte[] data = new byte[count];
-
         ReadExactly(data);
 
         return data;
     }
+
     public byte[] ReadFile(XdvdfsDirectoryEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
@@ -241,33 +337,40 @@ public sealed class XboxIsoReader : IDisposable
             VolumeDescriptor.PartitionOffset +
             ((long)entry.StartSector * SectorSize);
 
-        long fileEnd =
-            fileOffset + entry.FileSize;
+        long fileEnd = checked(fileOffset + entry.FileSize);
 
         if (fileOffset < 0 || fileEnd > _stream.Length)
         {
             throw new InvalidDataException(
-                $"File '{entry.Name}' extends beyond the end of the ISO.");
+                $"File '{entry.Name}' extends beyond the end of the image.");
         }
+
+        int fileSize = checked((int)entry.FileSize);
 
         _stream.Position = fileOffset;
 
-        byte[] data = new byte[entry.FileSize];
-
+        byte[] data = new byte[fileSize];
         ReadExactly(data);
 
         return data;
     }
+
     public IReadOnlyList<XdvdfsFileEntry> EnumerateFiles()
     {
         var files = new List<XdvdfsFileEntry>();
+
+        // Track directory locations to protect against malformed cyclic trees.
+        var visitedDirectories = new HashSet<(long Offset, uint Size)>();
 
         void WalkDirectory(
             long directoryOffset,
             uint directorySize,
             string relativePath)
         {
-            var visited = new HashSet<uint>();
+            if (!visitedDirectories.Add((directoryOffset, directorySize)))
+                return;
+
+            var visitedEntries = new HashSet<uint>();
             var pending = new Stack<uint>();
 
             pending.Push(0);
@@ -276,32 +379,26 @@ public sealed class XboxIsoReader : IDisposable
             {
                 uint dwordOffset = pending.Pop();
 
-                if (!visited.Add(dwordOffset))
+                if (!visitedEntries.Add(dwordOffset))
                     continue;
 
-                long byteOffset =
-                    (long)dwordOffset * 4;
+                long byteOffset = (long)dwordOffset * 4;
 
                 if (byteOffset >= directorySize)
                 {
                     throw new InvalidDataException(
                         $"Directory entry DWORD offset {dwordOffset} " +
-                        $"is outside the directory.");
+                        "is outside the directory.");
                 }
 
-                long entryOffset =
-                    directoryOffset +
-                    byteOffset;
-
+                long entryOffset = directoryOffset + byteOffset;
                 _stream.Position = entryOffset;
 
-                var entry =
-                    ReadDirectoryEntryAtCurrentPosition();
+                var entry = ReadDirectoryEntryAtCurrentPosition();
 
-                string entryPath =
-                    string.IsNullOrEmpty(relativePath)
-                        ? entry.Name
-                        : Path.Combine(relativePath, entry.Name);
+                string entryPath = string.IsNullOrEmpty(relativePath)
+                    ? entry.Name
+                    : Path.Combine(relativePath, entry.Name);
 
                 if ((entry.Attributes & 0x10) != 0)
                 {
@@ -316,12 +413,11 @@ public sealed class XboxIsoReader : IDisposable
                 }
                 else
                 {
-                    files.Add(
-                        new XdvdfsFileEntry
-                        {
-                            Entry = entry,
-                            RelativePath = entryPath
-                        });
+                    files.Add(new XdvdfsFileEntry
+                    {
+                        Entry = entry,
+                        RelativePath = entryPath
+                    });
                 }
 
                 if (entry.Right != 0)
@@ -343,12 +439,18 @@ public sealed class XboxIsoReader : IDisposable
 
         return files;
     }
+
+    /// <summary>
+    /// Searches the root directory only, preserving the original API behavior.
+    /// </summary>
     public XdvdfsDirectoryEntry? FindEntry(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
+        {
             throw new ArgumentException(
                 "Entry name cannot be empty.",
                 nameof(name));
+        }
 
         foreach (var entry in ReadRootDirectory())
         {
@@ -363,22 +465,16 @@ public sealed class XboxIsoReader : IDisposable
 
         return null;
     }
+
     private XdvdfsDirectoryEntry ReadDirectoryEntryAtCurrentPosition()
     {
         byte[] header = new byte[14];
         ReadExactly(header);
 
-        ushort left =
-            BitConverter.ToUInt16(header, 0);
-
-        ushort right =
-            BitConverter.ToUInt16(header, 2);
-
-        uint startSector =
-            BitConverter.ToUInt32(header, 4);
-
-        uint fileSize =
-            BitConverter.ToUInt32(header, 8);
+        ushort left = BitConverter.ToUInt16(header, 0);
+        ushort right = BitConverter.ToUInt16(header, 2);
+        uint startSector = BitConverter.ToUInt32(header, 4);
+        uint fileSize = BitConverter.ToUInt32(header, 8);
 
         byte attributes = header[12];
         byte nameLength = header[13];
@@ -386,8 +482,7 @@ public sealed class XboxIsoReader : IDisposable
         byte[] nameBytes = new byte[nameLength];
         ReadExactly(nameBytes);
 
-        string name =
-            Encoding.ASCII.GetString(nameBytes);
+        string name = Encoding.ASCII.GetString(nameBytes);
 
         return new XdvdfsDirectoryEntry
         {
@@ -400,43 +495,32 @@ public sealed class XboxIsoReader : IDisposable
         };
     }
 
-    private static int AlignToDword(int value)
-    {
-        return (value + 3) & ~3;
-    }
-
-    private static bool IsPadding(byte[] data, int offset)
-    {
-        return data[offset] == 0xFF ||
-               data[offset] == 0x00;
-    }
-
     private long FindGamePartition()
     {
-        if (HasVolumeSignature(DescriptorOffsetFromPartition))
+        foreach (long partitionOffset in GamePartitionOffsets)
         {
-            return 0;
-        }
+            long signatureOffset =
+                partitionOffset + DescriptorOffsetFromPartition;
 
-        if (HasVolumeSignature(
-                StandardGamePartitionOffset + DescriptorOffsetFromPartition))
-        {
-            return StandardGamePartitionOffset;
+            if (HasVolumeSignature(signatureOffset))
+                return partitionOffset;
         }
 
         throw new InvalidDataException(
-            "Could not locate an XDVDFS game partition in the ISO.");
+            "Could not locate an XDVDFS game partition in the image.");
     }
 
     private bool HasVolumeSignature(long offset)
     {
-        if (offset < 0 || offset + VolumeSignature.Length > _stream.Length)
+        if (offset < 0 ||
+            offset + VolumeSignature.Length > _stream.Length)
+        {
             return false;
+        }
 
         _stream.Position = offset;
 
         byte[] signatureBytes = new byte[VolumeSignature.Length];
-
         ReadExactly(signatureBytes);
 
         return Encoding.ASCII.GetString(signatureBytes) == VolumeSignature;
@@ -454,8 +538,10 @@ public sealed class XboxIsoReader : IDisposable
                 buffer.Length - totalRead);
 
             if (bytesRead == 0)
+            {
                 throw new EndOfStreamException(
-                    "Unexpected end of ISO while reading XDVDFS data.");
+                    "Unexpected end of image while reading XDVDFS data.");
+            }
 
             totalRead += bytesRead;
         }
@@ -463,6 +549,12 @@ public sealed class XboxIsoReader : IDisposable
 
     public void Dispose()
     {
-        _stream.Dispose();
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        if (!_leaveOpen)
+            _stream.Dispose();
     }
 }

@@ -88,10 +88,10 @@ static async Task RunAsync(string[] args)
     /*
      * No arguments = interactive menu.
      */
-    await RunInteractiveMenuAsync();
+    await RunInteractiveMenuAsync(configuration);
 }
 
-static async Task RunInteractiveMenuAsync()
+static async Task RunInteractiveMenuAsync(ToolkitConfiguration configuration)
 {
     while (true)
     {
@@ -115,14 +115,11 @@ static async Task RunInteractiveMenuAsync()
         switch (choice)
         {
             case "1":
-                Console.WriteLine(
-                    "Game installation is not implemented yet.");
-
-                Pause();
+                await GameInstallationWorkflow.RunAsync(configuration);
                 break;
 
             case "2":
-                await RunIsoMenuOptionAsync();
+                await RunImageAnalysisMenuOptionAsync();
                 break;
 
             case "3":
@@ -141,6 +138,55 @@ static async Task RunInteractiveMenuAsync()
     }
 }
 
+
+static async Task RunImageAnalysisMenuOptionAsync()
+{
+    string? selectedPath = await Task.Run(() =>
+    {
+        string? path = null;
+
+        var thread = new Thread(() =>
+        {
+            using var dialog = new System.Windows.Forms.OpenFileDialog
+            {
+                Title = "Select an Xbox ISO or archive",
+                Filter =
+                    "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|" +
+                    "Disc images (*.iso;*.xiso)|*.iso;*.xiso|" +
+                    "Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|" +
+                    "All files (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog() ==
+                System.Windows.Forms.DialogResult.OK)
+            {
+                path = dialog.FileName;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        return path;
+    });
+
+    Console.WriteLine();
+
+    if (string.IsNullOrWhiteSpace(selectedPath))
+    {
+        Console.WriteLine("Image selection cancelled.");
+        Pause();
+        return;
+    }
+
+    await AnalyzeIsoAsync(selectedPath);
+
+    Pause();
+}
+
 static async Task RunIsoMenuOptionAsync()
 {
     string? isoPath = await Task.Run(() =>
@@ -154,7 +200,11 @@ static async Task RunIsoMenuOptionAsync()
                     new System.Windows.Forms.OpenFileDialog
                     {
                         Title = "Select Xbox ISO",
-                        Filter = "Xbox ISO files (*.iso)|*.iso|All files (*.*)|*.*",
+                        Filter =
+                            "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|" +
+                            "Disc images (*.iso;*.xiso)|*.iso;*.xiso|" +
+                            "Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|" +
+                            "All files (*.*)|*.*",
                         CheckFileExists = true,
                         Multiselect = false
                     };
@@ -402,11 +452,14 @@ static async Task AnalyzeIsoAsync(
 
     try
     {
-        var analyzer =
-            new XboxGameImageAnalyzer();
+        using var source = ArchiveImageSource.Open(isoPath);
 
-        var game =
-            analyzer.Analyze(isoPath);
+        var analyzer = new XboxGameImageAnalyzer();
+
+        var game = analyzer.Analyze(
+            source.ImageStream,
+            source.ImageName,
+            source.ImageLength);
 
         Console.WriteLine(
             $"ISO: {game.FileName}");
@@ -1216,3 +1269,5 @@ static void PrintXbeAllowedMedia(
             $"Undocumented Media Bits: 0x{undocumented:X8}");
     }
 }
+
+

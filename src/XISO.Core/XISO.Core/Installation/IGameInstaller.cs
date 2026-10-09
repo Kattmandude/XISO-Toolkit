@@ -1,3 +1,4 @@
+
 namespace XISO.Core.Installation;
 
 public interface IGameInstaller
