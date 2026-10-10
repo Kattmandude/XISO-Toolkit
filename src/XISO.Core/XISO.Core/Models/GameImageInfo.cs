@@ -27,6 +27,11 @@ public class GameImageInfo
     public byte XexDiscNumber { get; set; }
     public byte XexDiscCount { get; set; }
     public uint XexSaveGameId { get; set; }
+
+    // Xbox 360 XEX security metadata.
+    public uint XexRegionMask { get; set; }
+    public string XexRegion { get; set; } = string.Empty;
+
     public string SerialNumber { get; set; } = string.Empty;
     public string Xmid { get; set; } = string.Empty;
     public string XbeMd5 { get; set; } = string.Empty;

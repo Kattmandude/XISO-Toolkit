@@ -7,4 +7,6 @@ public sealed class Xex2SecurityInfo
     public uint LoadAddress { get; init; }
 
     public byte[] AesKey { get; init; } = [];
+
+    public uint GameRegion { get; init; }
 }

@@ -148,11 +148,27 @@ public sealed class Xex2Reader
             imageInfoOffset + aesKeyOffset,
             aesKeySize).ToArray();
 
+        // Game region is at offset 0x178 from the beginning
+        // of the XEX2 Security Info structure.
+        const int regionOffset = 0x178;
+
+        if ((long)securityOffset + regionOffset + 4 > xexData.Length)
+        {
+            throw new InvalidDataException(
+                "XEX2 region field extends beyond the supplied XEX data.");
+        }
+
+        uint gameRegion =
+            ReadUInt32BigEndian(
+                xexData,
+                securityOffset + regionOffset);
+
         return new Xex2SecurityInfo
         {
             ImageSize = imageSize,
             LoadAddress = loadAddress,
-            AesKey = aesKey
+            AesKey = aesKey,
+            GameRegion = gameRegion
         };
     }
     public Xex2ExecutionId ReadExecutionId(byte[] xexData)

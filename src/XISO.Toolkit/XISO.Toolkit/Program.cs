@@ -407,6 +407,13 @@ internal static void PrintGameInformation(GameImageInfo game)
 
             Console.WriteLine($"XEX Save Game ID: 0x{game.XexSaveGameId:X8}");
 
+            Console.WriteLine($"XEX Region Mask: 0x{game.XexRegionMask:X8}");
+
+            if (!string.IsNullOrWhiteSpace(game.XexRegion))
+            {
+                Console.WriteLine($"XEX Region: {game.XexRegion}");
+            }
+
             if (!string.IsNullOrWhiteSpace(game.ReleaseRegion))
             {
                 Console.WriteLine($"Release Region: {game.ReleaseRegion}");

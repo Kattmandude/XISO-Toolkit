@@ -149,6 +149,15 @@ public sealed class XboxGameImageAnalyzer
         result.XexDiscCount = executionId.DiscCount;
         result.XexSaveGameId = executionId.SaveGameId;
 
+        // Read and preserve the XEX security metadata.
+        // Do this before reconstruction so region data remains
+        // available even if the compression format is unsupported.
+        var security = xexReader.ReadSecurityInfo(xexData);
+
+        result.XexRegionMask = security.GameRegion;
+        result.XexRegion =
+            Xex2RegionDecoder.Decode(security.GameRegion);
+
         // Recover the title from the embedded XDBF resource.
         byte[] image;
 
@@ -163,8 +172,6 @@ public sealed class XboxGameImageAnalyzer
             // from being reported.
             return;
         }
-
-        var security = xexReader.ReadSecurityInfo(xexData);
 
         var resourceReader = new Xex2ResourceInfoReader();
         var resources = resourceReader.ReadResources(xexData);
