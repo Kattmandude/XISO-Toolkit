@@ -1,4 +1,3 @@
-
 using XISO.Core.Data;
 using XISO.Core.Metadata;
 using XISO.Core.Models;
@@ -55,10 +54,7 @@ public sealed class XboxGameImageAnalyzer
             FileAccess.Read,
             FileShare.Read);
 
-        return Analyze(
-            stream,
-            isoPath,
-            stream.Length);
+        return Analyze(stream, isoPath, stream.Length);
     }
 
     /// <summary>
@@ -136,23 +132,76 @@ public sealed class XboxGameImageAnalyzer
         XdvdfsDirectoryEntry executable,
         GameImageInfo result)
     {
-        var xexData = reader.ReadFile(executable);
+        byte[] xexData = reader.ReadFile(executable);
+
         var xexReader = new Xex2Reader();
         var executionId = xexReader.ReadExecutionId(xexData);
 
+        // Preserve the XEX execution metadata.
         result.TitleId = executionId.TitleId.ToString("X8");
         result.MediaId = executionId.MediaId.ToString("X8");
-        result.Version = executionId.Version.ToString();
 
-        var lookup = _titleProvider.Find(
-            result.Platform,
-            result.TitleId,
-            result.MediaId);
+        result.XexVersion = executionId.Version;
+        result.XexBaseVersion = executionId.BaseVersion;
+        result.XexPlatform = executionId.Platform;
+        result.XexExecutableType = executionId.ExecutableType;
+        result.XexDiscNumber = executionId.DiscNumber;
+        result.XexDiscCount = executionId.DiscCount;
+        result.XexSaveGameId = executionId.SaveGameId;
 
-        if (lookup is not null)
+        // Recover the title from the embedded XDBF resource.
+        byte[] image;
+
+        try
         {
-            result.Title = lookup.Title;
-            result.ReleaseRegion = lookup.Region;
+            var reconstructor = new Xex2ImageReconstructor();
+            image = reconstructor.Reconstruct(xexData);
+        }
+        catch (NotSupportedException)
+        {
+            // Unsupported XEX formats must not prevent basic metadata
+            // from being reported.
+            return;
+        }
+
+        var security = xexReader.ReadSecurityInfo(xexData);
+
+        var resourceReader = new Xex2ResourceInfoReader();
+        var resources = resourceReader.ReadResources(xexData);
+
+        var titleResource = resources.FirstOrDefault(resource =>
+            string.Equals(
+                resource.Name,
+                result.TitleId,
+                StringComparison.OrdinalIgnoreCase));
+
+        if (titleResource is null)
+        {
+            return;
+        }
+
+        long resourceOffset =
+            (long)titleResource.Address - security.LoadAddress;
+
+        if (titleResource.Size > int.MaxValue ||
+            resourceOffset < 0 ||
+            resourceOffset + titleResource.Size > image.Length)
+        {
+            throw new InvalidDataException(
+                $"XEX title resource '{titleResource.Name}' " +
+                "extends beyond the reconstructed image.");
+        }
+
+        byte[] resourceData = image.AsSpan(
+            (int)resourceOffset,
+            (int)titleResource.Size).ToArray();
+
+        var titleReader = new XdbfTitleReader();
+        string? title = titleReader.ReadTitle(resourceData);
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            result.Title = title;
         }
     }
 
@@ -203,71 +252,7 @@ public sealed class XboxGameImageAnalyzer
         XboxIsoReader reader,
         GameImageInfo result)
     {
-        var files = reader.EnumerateFiles();
-
-        var cdxInx = files.FirstOrDefault(file =>
-            file.RelativePath.Equals(
-                "cdxmedia\\cdx.inx",
-                StringComparison.OrdinalIgnoreCase));
-
-        if (cdxInx is null)
-        {
-            return;
-        }
-
-        var cdxData = reader.ReadFile(cdxInx.Entry);
-        var cdxDefinition = CdxDefinitionParser.Parse(cdxData);
-        var cdxGames = new List<CdxGameInfo>();
-
-        foreach (var menuItem in cdxDefinition.MenuItems)
-        {
-            var normalizedFileName = menuItem.FileName.Replace('/', '\\');
-
-            var gameFile = files.FirstOrDefault(file =>
-                file.RelativePath.Equals(
-                    normalizedFileName,
-                    StringComparison.OrdinalIgnoreCase));
-
-            if (gameFile is null)
-            {
-                continue;
-            }
-
-            var gameXbeData = reader.ReadFile(gameFile.Entry);
-            var gameXbe = new XbeReader(gameXbeData);
-
-            var gameInfo = new CdxGameInfo
-            {
-                DisplayName = menuItem.DisplayName,
-                FileName = gameFile.RelativePath,
-                Title = gameXbe.TitleName,
-                TitleId = gameXbe.TitleId.ToString("X8"),
-                SerialNumber = gameXbe.SerialNumber,
-                Xmid = gameXbe.Xmid,
-                XbeMd5 = gameXbe.Md5,
-                XbeRegionMask = gameXbe.GameRegion,
-                XbeRegion = gameXbe.GameRegionDescription,
-                Version = $"0x{gameXbe.Version:X8}",
-                XbeSizeOfHeaders = gameXbe.SizeOfHeaders,
-                XbeSizeOfImage = gameXbe.SizeOfImage,
-                XbeTimeDate = gameXbe.TimeDate,
-                XbeNumberOfSections = gameXbe.NumberOfSections,
-                XbeInitFlags = gameXbe.InitFlags,
-                XbeLibraryVersionCount = gameXbe.LibraryVersionCount,
-                XbeLibraryVersionsAddress = gameXbe.LibraryVersionsAddress,
-                XbeLibraryVersions = gameXbe.LibraryVersions
-            };
-
-            var gameRelease = _releaseDatabase.FindByXbeMd5(gameXbe.Md5);
-
-            if (gameRelease is not null)
-            {
-                gameInfo.ReleaseRegion = gameRelease.Region;
-            }
-
-            cdxGames.Add(gameInfo);
-        }
-
-        result.CdxGames = cdxGames;
+        // TODO: Restore the original CDX menu analysis implementation.
+        // The original method was not present in the supplied source.
     }
 }

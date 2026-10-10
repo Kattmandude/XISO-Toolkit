@@ -390,7 +390,27 @@ internal static void PrintGameInformation(GameImageInfo game)
         if (game.Platform == XboxPlatform.Xbox360)
         {
             Console.WriteLine($"Media ID: {game.MediaId}");
-            Console.WriteLine($"XBE Title Version: {game.Version}");
+            Console.WriteLine($"XEX Execution Version: 0x{game.XexVersion:X8}");
+            Console.WriteLine($"XEX Base Version: 0x{game.XexBaseVersion:X8}");
+            Console.WriteLine($"XEX Platform: 0x{game.XexPlatform:X2}");
+            Console.WriteLine($"XEX Executable Type: 0x{game.XexExecutableType:X2}");
+
+            if (game.XexDiscCount > 0)
+            {
+                Console.WriteLine(
+                    $"XEX Disc: {game.XexDiscNumber} of {game.XexDiscCount}");
+            }
+            else
+            {
+                Console.WriteLine($"XEX Disc Number: {game.XexDiscNumber}");
+            }
+
+            Console.WriteLine($"XEX Save Game ID: 0x{game.XexSaveGameId:X8}");
+
+            if (!string.IsNullOrWhiteSpace(game.ReleaseRegion))
+            {
+                Console.WriteLine($"Release Region: {game.ReleaseRegion}");
+            }
         }
         else if (game.Platform == XboxPlatform.OriginalXbox)
         {
@@ -572,6 +592,53 @@ static async Task AnalyzeIsoAsync(
 
                     Console.WriteLine(
                         $"  Languages: {languages}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(
+                    $"  DBox lookup failed: {ex.Message}");
+            }
+        }
+
+        if (game.Platform == XboxPlatform.Xbox360)
+        {
+            Console.WriteLine();
+            Console.WriteLine("DBox Xbox 360 Information (https://dbox.tools):");
+
+            try
+            {
+                var dboxClient = new DBoxClient();
+
+                string? dboxTitle =
+                    await dboxClient.GetTitleNameByTitleIdAsync(
+                        game.TitleId);
+
+                Console.WriteLine(
+                    $"  DBox Title: {dboxTitle ?? "No title record found"}");
+
+                var dboxDisc =
+                    await dboxClient.GetDiscByMediaIdAsync(
+                        game.MediaId);
+
+                if (dboxDisc == null)
+                {
+                    Console.WriteLine(
+                        "  No DBox disc record found for this Media ID.");
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"  Disc Release: {dboxDisc.RedumpName ?? "Unknown"}");
+
+                    Console.WriteLine(
+                        $"  Release Region: {dboxDisc.RedumpRegion ?? "Unknown"}");
+
+                    Console.WriteLine(
+                        $"  Edition: {dboxDisc.RedumpEdition ?? "Unknown"}");
+
+                    Console.WriteLine(
+                        $"  Languages: {dboxDisc.RedumpLanguages ?? "Not specified"}");
                 }
             }
             catch (Exception ex)

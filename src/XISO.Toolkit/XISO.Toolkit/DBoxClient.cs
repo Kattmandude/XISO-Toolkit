@@ -1,3 +1,5 @@
+
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,12 +28,76 @@ public sealed class DBoxClient
         if (string.IsNullOrWhiteSpace(xmid))
             return null;
 
-        string encodedXmid =
-            Uri.EscapeDataString(xmid.Trim());
+        string encoded = Uri.EscapeDataString(xmid.Trim());
 
-        return await _httpClient.GetFromJsonAsync<DBoxDisc>(
-            $"api/discs/xmid/{encodedXmid}",
+        return await GetDiscAsync(
+            $"api/discs/xmid/{encoded}",
             cancellationToken);
+    }
+
+    public async Task<DBoxDisc?> GetDiscByMediaIdAsync(
+        string mediaId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+            return null;
+
+        string encoded = Uri.EscapeDataString(mediaId.Trim());
+
+        return await GetDiscAsync(
+            $"api/discs/media_id/{encoded}",
+            cancellationToken);
+    }
+
+    public async Task<string?> GetTitleNameByTitleIdAsync(
+        string titleId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(titleId))
+            return null;
+
+        string normalizedTitleId = titleId.Trim();
+
+        if (normalizedTitleId.StartsWith(
+            "0x",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedTitleId = normalizedTitleId[2..];
+        }
+
+        string encoded = Uri.EscapeDataString(
+            normalizedTitleId.ToUpperInvariant());
+
+        using HttpResponseMessage response =
+            await _httpClient.GetAsync(
+                $"api/title_ids/{encoded}",
+                cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+
+        await using Stream content =
+            await response.Content.ReadAsStreamAsync(
+                cancellationToken);
+
+        using JsonDocument document =
+            await JsonDocument.ParseAsync(
+                content,
+                cancellationToken: cancellationToken);
+
+        if (TryGetStringProperty(
+            document.RootElement,
+            "name",
+            out string? name))
+        {
+            return string.IsNullOrWhiteSpace(name)
+                ? null
+                : name.Trim();
+        }
+
+        return null;
     }
 
     public async Task<string?> GetRawDiscByXmidAsync(
@@ -41,18 +107,66 @@ public sealed class DBoxClient
         if (string.IsNullOrWhiteSpace(xmid))
             return null;
 
-        string encodedXmid =
-            Uri.EscapeDataString(xmid.Trim());
+        string encoded = Uri.EscapeDataString(xmid.Trim());
 
         using HttpResponseMessage response =
             await _httpClient.GetAsync(
-                $"api/discs/xmid/{encodedXmid}",
+                $"api/discs/xmid/{encoded}",
                 cancellationToken);
 
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadAsStringAsync(
             cancellationToken);
+    }
+
+    private async Task<DBoxDisc?> GetDiscAsync(
+        string requestUri,
+        CancellationToken cancellationToken)
+    {
+        using HttpResponseMessage response =
+            await _httpClient.GetAsync(
+                requestUri,
+                cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<DBoxDisc>(
+            cancellationToken: cancellationToken);
+    }
+
+    private static bool TryGetStringProperty(
+        JsonElement element,
+        string propertyName,
+        out string? value)
+    {
+        value = null;
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!property.Name.Equals(
+                propertyName,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.String)
+            {
+                value = property.Value.GetString();
+                return true;
+            }
+
+            return false;
+        }
+
+        return false;
     }
 }
 

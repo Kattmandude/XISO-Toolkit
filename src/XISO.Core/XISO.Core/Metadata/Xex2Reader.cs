@@ -102,6 +102,59 @@ public sealed class Xex2Reader
 
         return null;
     }
+    public Xex2SecurityInfo ReadSecurityInfo(byte[] xexData)
+    {
+        ArgumentNullException.ThrowIfNull(xexData);
+
+        var header = ReadHeader(xexData);
+
+        if (header.SecurityInfoOffset > int.MaxValue)
+            throw new InvalidDataException(
+                "XEX2 Security Info offset is too large.");
+
+        int securityOffset = (int)header.SecurityInfoOffset;
+
+        // Security Info header + image size + 256-byte RSA signature.
+        const int minimumSecurityInfoSize = 4 + 4 + 256;
+
+        if (securityOffset < 0 ||
+            (long)securityOffset + minimumSecurityInfoSize > xexData.Length)
+        {
+            throw new InvalidDataException(
+                "XEX2 Security Info extends beyond the supplied XEX data.");
+        }
+
+        uint imageSize =
+            ReadUInt32BigEndian(xexData, securityOffset + 4);
+
+        // Image Info begins after the 8-byte security header and 256-byte signature.
+        int imageInfoOffset = securityOffset + 8 + 256;
+
+        // Load address is at Image Info + 8.
+        uint loadAddress =
+            ReadUInt32BigEndian(xexData, imageInfoOffset + 8);
+
+        // AES key is at Image Info + 72.
+        const int aesKeyOffset = 72;
+        const int aesKeySize = 16;
+
+        if ((long)imageInfoOffset + aesKeyOffset + aesKeySize > xexData.Length)
+        {
+            throw new InvalidDataException(
+                "XEX2 AES key extends beyond the supplied XEX data.");
+        }
+
+        byte[] aesKey = xexData.AsSpan(
+            imageInfoOffset + aesKeyOffset,
+            aesKeySize).ToArray();
+
+        return new Xex2SecurityInfo
+        {
+            ImageSize = imageSize,
+            LoadAddress = loadAddress,
+            AesKey = aesKey
+        };
+    }
     public Xex2ExecutionId ReadExecutionId(byte[] xexData)
     {
         ArgumentNullException.ThrowIfNull(xexData);

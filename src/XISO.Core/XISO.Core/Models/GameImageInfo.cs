@@ -18,6 +18,15 @@ public class GameImageInfo
 
     public string TitleId { get; set; } = string.Empty;
     public string MediaId { get; set; } = string.Empty;
+
+    // Xbox 360 XEX Execution ID metadata.
+    public uint XexVersion { get; set; }
+    public uint XexBaseVersion { get; set; }
+    public byte XexPlatform { get; set; }
+    public byte XexExecutableType { get; set; }
+    public byte XexDiscNumber { get; set; }
+    public byte XexDiscCount { get; set; }
+    public uint XexSaveGameId { get; set; }
     public string SerialNumber { get; set; } = string.Empty;
     public string Xmid { get; set; } = string.Empty;
     public string XbeMd5 { get; set; } = string.Empty;
