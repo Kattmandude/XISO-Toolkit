@@ -15,9 +15,12 @@ namespace XISO.Toolkit;
 
 public static class GameInstallationWorkflow
 {
-    public static async Task RunAsync(ToolkitConfiguration configuration)
+    internal static async Task RunAsync(
+        ToolkitConfiguration configuration,
+        MainForm form)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(form);
 
         string? selectedSourcePath = OnStaThread(() =>
         {
@@ -37,14 +40,25 @@ public static class GameInstallationWorkflow
         if (string.IsNullOrWhiteSpace(selectedSourcePath))
             return;
 
+        form.SetArtwork(null);
+
+        // Clear old output before printing the analyzing message.
+        form.ClearOutput();
+
+        form.StartActivity("Opening archive...");
+
         ArchiveImageSource archiveSource;
 
         try
         {
-            archiveSource = ArchiveImageSource.Open(selectedSourcePath);
+            // Open the archive in the background so the UI can animate.
+            archiveSource = await Task.Run(
+                () => ArchiveImageSource.Open(selectedSourcePath));
         }
         catch (Exception ex)
         {
+            form.StopActivity();
+
             ShowMessage(
                 $"The selected file could not be opened as an Xbox image or supported archive.\n\n{ex.Message}",
                 "Installation",
@@ -58,27 +72,43 @@ public static class GameInstallationWorkflow
 
         try
         {
+            form.UpdateActivity("Analyzing game image...");
+
             Console.WriteLine($"Analyzing: {archiveSource.ImageName}");
 
-            game = new XboxGameImageAnalyzer().Analyze(
-                archiveSource.ImageStream,
-                archiveSource.ImageName,
-                archiveSource.ImageLength);
+            var analyzer = new XboxGameImageAnalyzer();
 
-            Console.WriteLine();
+            game = await Task.Run(
+                () => analyzer.Analyze(
+                    archiveSource.ImageStream,
+                    archiveSource.ImageName,
+                    archiveSource.ImageLength));
 
             Program.PrintGameInformation(game);
 
+            form.UpdateActivity("Looking up game information...");
+
+            await Program.PrintDatabaseInformationAsync(game, form);
+
             Console.WriteLine();
+
+            form.ScrollOutputToTop();
         }
         catch (Exception ex)
         {
+            form.StopActivity();
+
             ShowMessage(
                 $"The ISO could not be analyzed.\n\n{ex.Message}",
                 "Installation",
                 MessageBoxIcon.Error);
             return;
         }
+        finally
+        {
+            form.StopActivity();
+        }
+
 
         if (game.Platform is not XboxPlatform.OriginalXbox
             and not XboxPlatform.Xbox360)
@@ -260,6 +290,65 @@ public static class GameInstallationWorkflow
                     request,
                     progress,
                     cancellationToken));
+    }
+
+    private static async Task UpdateArtworkAsync(
+    GameImageInfo game,
+    MainForm form)
+    {
+        if (game.Platform != XboxPlatform.Xbox360)
+        {
+            return;
+        }
+
+        try
+        {
+            var client = new X360DbClient();
+
+            bool databaseAvailable =
+                await client.EnsureDatabaseAsync();
+
+            if (!databaseAvailable)
+            {
+                Console.WriteLine(
+                    "Artwork unavailable: Xbox 360 database is unavailable.");
+
+                return;
+            }
+
+            var x360Game =
+                await client.GetGameAsync(
+                    game.TitleId,
+                    game.MediaId);
+
+            var x360Details =
+                await client.GetDetailsAsync(
+                    game.TitleId);
+
+            string? boxArtUrl =
+                x360Details?.Artwork?.BoxArt
+                ?? x360Game?.BoxArt;
+
+            string? artworkPath =
+                await client.DownloadBoxArtAsync(
+                    game.TitleId,
+                    boxArtUrl);
+
+            if (!string.IsNullOrWhiteSpace(artworkPath))
+            {
+                form.SetArtwork(artworkPath);
+            }
+            else
+            {
+                Console.WriteLine(
+                    "No Xbox 360 artwork was available for this game.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"Could not load game artwork: {ex.Message}");
+        }
     }
 
     private static InstallOptions? ShowInstallOptions(

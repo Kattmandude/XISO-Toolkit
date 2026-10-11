@@ -7,13 +7,40 @@ using static System.Net.Mime.MediaTypeNames;
 
 namespace XISO.OriginalXbox.Tests;
 
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class IsoFixtureFactAttribute : FactAttribute
+{
+    public IsoFixtureFactAttribute(params string[] fileNames)
+    {
+        string? fixtureDirectory =
+            Environment.GetEnvironmentVariable("XISO_TEST_FIXTURE_DIRECTORY");
+
+        if (string.IsNullOrWhiteSpace(fixtureDirectory))
+        {
+            fixtureDirectory =
+                Path.Combine(AppContext.BaseDirectory, "Fixtures");
+        }
+
+        string[] missingFiles = fileNames
+            .Where(fileName =>
+                !File.Exists(Path.Combine(fixtureDirectory, fileName)))
+            .ToArray();
+
+        if (missingFiles.Length > 0)
+        {
+            Skip =
+                "Required ISO fixture(s) not found in '" +
+                fixtureDirectory + "': " +
+                string.Join(", ", missingFiles);
+        }
+    }
+}
 public class XboxIsoReaderTests
 {
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsVolumeDescriptor()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader = new XISO.OriginalXbox.XboxIsoReader(isoPath);
 
@@ -22,11 +49,10 @@ public class XboxIsoReaderTests
         Assert.Equal(0x00000800U, reader.VolumeDescriptor.RootDirectorySize);
     }
 
-    [Fact]
+    [IsoFixtureFact("Ninja Gaiden II (World) (En,Ja,Fr,De,Es,It,Zh,Ko,Pl,Ru).iso")]
     public void ReadsNinjaGaidenIIVolumeDescriptor()
     {
-        const string isoPath =
-            @"F:\Downloads\Ninja Gaiden II (World) (En,Ja,Fr,De,Es,It,Zh,Ko,Pl,Ru).iso";
+        string isoPath = RequireIsoFixture("Ninja Gaiden II (World) (En,Ja,Fr,De,Es,It,Zh,Ko,Pl,Ru).iso");
 
         using var reader = new XISO.OriginalXbox.XboxIsoReader(isoPath);
 
@@ -35,11 +61,10 @@ public class XboxIsoReaderTests
         Assert.Equal(0x00000800U, reader.VolumeDescriptor.RootDirectorySize);
     }
 
-    [Fact]
+    [IsoFixtureFact("Tom Clancy's Splinter Cell - Pandora Tomorrow (USA, Europe) (En,Fr,De,Es,It).xiso.iso")]
     public void ReadsPandoraTomorrowVolumeDescriptor()
     {
-        const string isoPath =
-            @"F:\Downloads\Tom Clancy's Splinter Cell - Pandora Tomorrow (USA, Europe) (En,Fr,De,Es,It).xiso.iso";
+        string isoPath = RequireIsoFixture("Tom Clancy's Splinter Cell - Pandora Tomorrow (USA, Europe) (En,Fr,De,Es,It).xiso.iso");
 
         using var reader = new XISO.OriginalXbox.XboxIsoReader(isoPath);
 
@@ -109,11 +134,10 @@ public class XboxIsoReaderTests
         Console.WriteLine($"Size: {entry.FileSize}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsRootDirectoryEntryFromIso()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -136,11 +160,10 @@ public class XboxIsoReaderTests
         Console.WriteLine($"Size: {entry.FileSize}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsRootDirectory()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -188,11 +211,10 @@ public class XboxIsoReaderTests
     }
 
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void FindsWorldOfOutlawsDefaultExecutable()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -209,11 +231,10 @@ public class XboxIsoReaderTests
         Console.WriteLine($"Executable: {entry.Name}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsDefaultXex()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -231,11 +252,10 @@ public class XboxIsoReaderTests
             $"First 16 bytes: {Convert.ToHexString(data.AsSpan(0, 16))}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void DetectsWorldOfOutlawsAsXbox360()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -249,11 +269,10 @@ public class XboxIsoReaderTests
         Console.WriteLine($"Platform: {platform}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void DetectsWorldOfOutlawsAsXex2()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -267,11 +286,10 @@ public class XboxIsoReaderTests
         Console.WriteLine($"Executable format: {format}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsXex2Header()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -312,11 +330,10 @@ public class XboxIsoReaderTests
             $"Optional header count: {header.OptionalHeaderCount}");
     }
 
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void FindsWorldOfOutlawsXex2ExecutionIdHeader()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -348,11 +365,10 @@ public class XboxIsoReaderTests
         Console.WriteLine(
             $"Execution ID offset: 0x{header.Value:X8}");
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsXex2ExecutionId()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -424,11 +440,10 @@ public class XboxIsoReaderTests
         Console.WriteLine(
             $"Save game ID: 0x{executionId.SaveGameId:X8}");
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ReadsWorldOfOutlawsXex2OptionalHeaders()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -459,11 +474,10 @@ public class XboxIsoReaderTests
                 $"Value=0x{headers[i].Value:X8}");
         }
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void AnalyzesWorldOfOutlawsGameImage()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         var analyzer =
             new XISO.OriginalXbox.XboxGameImageAnalyzer();
@@ -495,14 +509,12 @@ public class XboxIsoReaderTests
             new FileInfo(isoPath).Length,
             result.FileSize);
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws - Sprint Cars (USA).iso", "World of Outlaws Sprint Cars (EU).iso")]
     public void AnalyzesWorldOfOutlawsUsaAndEuropeReleases()
     {
-        const string usaIsoPath =
-            @"F:\Downloads\World of Outlaws - Sprint Cars (USA).iso";
+        string usaIsoPath = RequireIsoFixture("World of Outlaws - Sprint Cars (USA).iso");
 
-        const string europeIsoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string europeIsoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         var analyzer =
             new XISO.OriginalXbox.XboxGameImageAnalyzer();
@@ -537,8 +549,8 @@ public class XboxIsoReaderTests
     [Fact]
     public void FindsWorldOfOutlawsInLocalTitleDatabase()
     {
-        const string databasePath =
-            @"F:\Projects\XISO-Toolkit\src\XISO.Core\XISO.Core\Data\GameTitles.json";
+        string databasePath =
+            Path.Combine(AppContext.BaseDirectory, "Data", "GameTitles.json");
 
         var database =
             new XISO.Core.Data.GameTitleDatabase(databasePath);
@@ -579,8 +591,8 @@ public class XboxIsoReaderTests
     [Fact]
     public void LoadsToolkitConfiguration()
     {
-        const string configurationPath =
-            @"F:\Projects\XISO-Toolkit\src\XISO.Core\XISO.Core\Data\ToolkitConfiguration.json";
+        string configurationPath =
+            Path.Combine(AppContext.BaseDirectory, "Data", "ToolkitConfiguration.json");
 
         var store =
             new XISO.Core.Configuration.ToolkitConfigurationStore();
@@ -601,9 +613,7 @@ public class XboxIsoReaderTests
             "Xbox 360 Games",
             xbox360Library.Name);
 
-        Assert.Equal(
-            @"F:\Emulators\Xenia\games",
-            xbox360Library.Path);
+        Assert.False(string.IsNullOrWhiteSpace(xbox360Library.Path));
 
         var originalXboxLibrary =
             result.GameLibraries.Single(
@@ -615,9 +625,7 @@ public class XboxIsoReaderTests
             "Original Xbox Games",
             originalXboxLibrary.Name);
 
-        Assert.Equal(
-            @"F:\Emulators\Xemu\games",
-            originalXboxLibrary.Path);
+        Assert.False(string.IsNullOrWhiteSpace(originalXboxLibrary.Path));
     }
 
     [Fact]
@@ -640,14 +648,14 @@ public class XboxIsoReaderTests
                             Name = "Xbox 360 Test Library",
                             Platform =
                                 XISO.Core.Detection.XboxPlatform.Xbox360,
-                            Path = @"D:\Games\Xbox 360"
+                            Path = Path.Combine("test-data", "Xbox 360")
                         },
                         new XISO.Core.Models.GameLibrary
                         {
                             Name = "Original Xbox Test Library",
                             Platform =
                                 XISO.Core.Detection.XboxPlatform.OriginalXbox,
-                            Path = @"E:\Games\Original Xbox"
+                            Path = Path.Combine("test-data", "Original Xbox")
                         }
                     ]
                 };
@@ -725,7 +733,7 @@ public class XboxIsoReaderTests
                     new()
                     {
                         IsoPath =
-                            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso",
+                            Path.Combine("fixture-data", "World of Outlaws Sprint Cars (EU).iso"),
 
                         IsoFileName =
                             "World of Outlaws Sprint Cars (EU).iso",
@@ -762,7 +770,7 @@ public class XboxIsoReaderTests
                             XISO.Core.Models.InstallationMethod.ExtractGameFiles,
 
                         InstallationPath =
-                            @"F:\Emulators\Xenia\games\World of Outlaws Sprint Cars (EU)",
+                            Path.Combine("emulators", "Xenia", "games", "World of Outlaws Sprint Cars (EU)"),
 
                         TitleUpdates =
                         [
@@ -793,7 +801,7 @@ public class XboxIsoReaderTests
             var record = loaded[0];
 
             Assert.Equal(
-                @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso",
+                Path.Combine("fixture-data", "World of Outlaws Sprint Cars (EU).iso"),
                 record.IsoPath);
 
             Assert.Equal(
@@ -829,7 +837,7 @@ public class XboxIsoReaderTests
                 record.InstallationMethod);
 
             Assert.Equal(
-                @"F:\Emulators\Xenia\games\World of Outlaws Sprint Cars (EU)",
+                Path.Combine("emulators", "Xenia", "games", "World of Outlaws Sprint Cars (EU)"),
                 record.InstallationPath);
 
             Assert.Single(record.TitleUpdates);
@@ -854,11 +862,10 @@ public class XboxIsoReaderTests
             }
         }
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void EnumeratesFilesFromXboxIso()
     {
-        const string isoPath =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string isoPath = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         using var reader =
             new XISO.OriginalXbox.XboxIsoReader(isoPath);
@@ -905,11 +912,10 @@ public class XboxIsoReaderTests
                     string.IsNullOrWhiteSpace(file.RelativePath));
             });
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void ExtractsGameFilesFromXboxIso()
     {
-        const string sourceIso =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string sourceIso = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         string testRoot =
             Path.Combine(
@@ -1090,11 +1096,10 @@ public class XboxIsoReaderTests
             }
         }
     }
-    [Fact]
+    [IsoFixtureFact("World of Outlaws Sprint Cars (EU).iso")]
     public void MovesAndRenamesXboxIso()
     {
-        const string sourceIso =
-            @"F:\Downloads\World of Outlaws Sprint Cars (EU).iso";
+        string sourceIso = RequireIsoFixture("World of Outlaws Sprint Cars (EU).iso");
 
         string testRoot =
             Path.Combine(
@@ -1163,6 +1168,28 @@ public class XboxIsoReaderTests
             }
         }
     }
+    private static string RequireIsoFixture(string fileName)
+    {
+        string? fixtureDirectory =
+            Environment.GetEnvironmentVariable("XISO_TEST_FIXTURE_DIRECTORY");
+
+        if (string.IsNullOrWhiteSpace(fixtureDirectory))
+        {
+            fixtureDirectory =
+                Path.Combine(AppContext.BaseDirectory, "Fixtures");
+        }
+
+        string path = Path.Combine(fixtureDirectory, fileName);
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException(
+                $"Required ISO fixture not found: {path}. " +
+                "Set XISO_TEST_FIXTURE_DIRECTORY to the folder containing the test ISOs.");
+        }
+
+        return path;
+    }
     private static void WriteUInt32BigEndian(
         byte[] data,
         int offset,
@@ -1173,11 +1200,10 @@ public class XboxIsoReaderTests
         data[offset + 2] = (byte)(value >> 8);
         data[offset + 3] = (byte)value;
     }
-    [Fact]
+    [IsoFixtureFact("Some Random Game.iso")]
     public void ReadsMysteryOriginalXboxXbeHeader()
     {
-        const string isoPath =
-            @"F:\Downloads\Some Random Game.iso";
+        string isoPath = RequireIsoFixture("Some Random Game.iso");
 
         using var reader =
             new XboxIsoReader(isoPath);
@@ -1278,8 +1304,8 @@ public class XboxIsoReaderTests
     [Fact]
     public void LooksUpOriginalXboxReleaseByXbeMd5()
     {
-        const string databasePath =
-            @"F:\Projects\XISO-Toolkit\.xdb-inspect\XISO-OriginalXbox-Releases.db";
+        string databasePath =
+            Path.Combine(AppContext.BaseDirectory, "Data", "XISO-OriginalXbox-Releases.db");
 
         const string xbeMd5 =
             "A997EA4883A016BC26B63D9035FF56AA";

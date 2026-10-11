@@ -26,38 +26,48 @@ internal static class Program
         var configurationStore = new ToolkitConfigurationStore();
         var configuration = configurationStore.Load(configurationPath);
 
-        var form = new MainForm(
-            installAction: () =>
-                GameInstallationWorkflow.RunAsync(configuration),
+        MainForm? form = null;
 
-            analyzeAction: RunImageAnalysisMenuOptionAsync,
+        form = new MainForm(
+            installAction: () =>
+                GameInstallationWorkflow.RunAsync(
+                    configuration,
+                    form!),
+
+            analyzeAction: () =>
+                RunImageAnalysisMenuOptionAsync(form!),
 
             updateAction: RunMobCatMenuOptionAsync,
 
-            startupAction: CheckMobCatAtStartupAsync,
+            startupAction: InitializeDatabasesAtStartupAsync,
 
             initialAction: args.Length > 0 &&
                 !string.Equals(args[0], "--update-mobcat", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(args[0], "--help", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(args[0], "-h", StringComparison.OrdinalIgnoreCase)
-                    ? () => AnalyzeIsoAsync(args[0])
+                    ? () => AnalyzeIsoAsync(args[0], form!)
                     : null,
 
             skipStartupAction: args.Length > 0 &&
                 (string.Equals(args[0], "--update-mobcat", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(args[0], "--help", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(args[0], "-h", StringComparison.OrdinalIgnoreCase)));
+                 string.Equals(args[0], "-h", StringComparison.OrdinalIgnoreCase)),
+
+            x360UpdateAction: RunX360DbMenuOptionAsync);
 
         var originalOut = Console.Out;
         var originalError = Console.Error;
 
         try
         {
-            Console.SetOut(new GuiTextWriter(form));
-            Console.SetError(new GuiTextWriter(form));
+            Console.SetOut(new GuiTextWriter(form!));
+            Console.SetError(new GuiTextWriter(form!));
 
             if (args.Length > 0 &&
-                string.Equals(args[0], "--update-mobcat", StringComparison.OrdinalIgnoreCase))
+                string.Equals(
+                    args[0],
+                    "--update-mobcat",
+                    StringComparison.OrdinalIgnoreCase))
             {
                 form.Shown += async (_, _) =>
                 {
@@ -80,56 +90,52 @@ internal static class Program
     return Task.CompletedTask;
 }
 
-
-static async Task RunImageAnalysisMenuOptionAsync()
-{
-    string? selectedPath = await Task.Run(() =>
+    static async Task RunImageAnalysisMenuOptionAsync(
+        MainForm form)
     {
-        string? path = null;
-
-        var thread = new Thread(() =>
+        string? selectedPath = await Task.Run(() =>
         {
-            using var dialog = new System.Windows.Forms.OpenFileDialog
-            {
-                Title = "Select an Xbox ISO or archive",
-                Filter =
-                    "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|" +
-                    "Disc images (*.iso;*.xiso)|*.iso;*.xiso|" +
-                    "Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|" +
-                    "All files (*.*)|*.*",
-                CheckFileExists = true,
-                Multiselect = false
-            };
+            string? path = null;
 
-            if (dialog.ShowDialog() ==
-                System.Windows.Forms.DialogResult.OK)
+            var thread = new Thread(() =>
             {
-                path = dialog.FileName;
-            }
+                using var dialog = new OpenFileDialog
+                {
+                    Title = "Select an Xbox ISO or archive",
+                    Filter =
+                        "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|" +
+                        "Disc images (*.iso;*.xiso)|*.iso;*.xiso|" +
+                        "Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|" +
+                        "All files (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    path = dialog.FileName;
+                }
+            });
+
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+
+            return path;
         });
 
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
 
-        return path;
-    });
+        // Clear previous output before any analysis messages are written.
+        form.ClearOutput();
 
-    Console.WriteLine();
-
-    if (string.IsNullOrWhiteSpace(selectedPath))
-    {
-        Console.WriteLine("Image selection cancelled.");
-        Pause();
-        return;
+        await AnalyzeIsoAsync(selectedPath, form);
     }
 
-    await AnalyzeIsoAsync(selectedPath);
-
-    Pause();
-}
-
-static async Task RunIsoMenuOptionAsync()
+    static async Task RunIsoMenuOptionAsync()
 {
     string? isoPath = await Task.Run(() =>
     {
@@ -254,14 +260,71 @@ static async Task RunArchiveMenuOptionAsync()
 static async Task RunMobCatMenuOptionAsync()
 {
     Console.WriteLine(
-        "Checking MobCat database for an update...");
+        "Checking MobCat for database update...");
+
     Console.WriteLine();
+
+    await ForceMobCatUpdateAsync();
+}
+
+static async Task RunX360DbMenuOptionAsync()
+{
+    Console.WriteLine(
+        "Checking x360db for database update...");
+
+    Console.WriteLine();
+
+    Console.WriteLine(
+        "Reading x360db metadata...");
 
     try
     {
-        var mobCatClient =
-            new MobCatClient();
+        var client = new X360DbClient();
 
+        X360DbUpdateResult result =
+            await client.CheckForUpdateAndInstallAsync();
+
+        Console.WriteLine(result.Reason);
+
+        if (result.RecordCount > 0)
+        {
+            Console.WriteLine(
+                $"Game records: {result.RecordCount:N0}");
+        }
+
+        Console.WriteLine(
+            $"Database: {client.IndexPath}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine(
+            $"Xbox 360 database update failed: {ex.Message}");
+    }
+}
+
+static async Task InitializeDatabasesAtStartupAsync()
+{
+    Console.WriteLine("XISO Toolkit initializing...");
+    Console.WriteLine();
+
+    await CheckMobCatAtStartupAsync();
+    await CheckX360DbAtStartupAsync();
+
+    Console.WriteLine("XISO Toolkit initialization complete.");
+}
+
+static async Task CheckMobCatAtStartupAsync()
+{
+    var mobCatClient = new MobCatClient();
+
+    Console.WriteLine(
+        "Checking MobCat for database update...");
+
+    Console.WriteLine(
+        "Reading MobCat metadata...");
+
+    try
+    {
         MobCatUpdateResult result =
             await mobCatClient.CheckForUpdateAndInstallAsync();
 
@@ -269,79 +332,54 @@ static async Task RunMobCatMenuOptionAsync()
         {
             Console.WriteLine(
                 "MobCat database updated successfully.");
-
-            Console.WriteLine(
-                $"Database: {mobCatClient.DatabasePath}");
-
-            if (result.LocalInfo != null)
-            {
-                Console.WriteLine(
-                    $"Records: {result.LocalInfo.RecordCount:N0}");
-            }
         }
         else
         {
             Console.WriteLine(
-                result.Reason);
-
-            if (result.LocalInfo != null)
-            {
-                Console.WriteLine(
-                    $"Installed records: {result.LocalInfo.RecordCount:N0}");
-            }
+                "MobCat database is already up to date.");
         }
+
+        int recordCount =
+            await mobCatClient.GetRecordCountAsync();
+
+        Console.WriteLine(
+            $"Game records: {recordCount:N0}");
+
+        Console.WriteLine(
+            $"Database: {mobCatClient.DatabasePath}");
     }
     catch (Exception ex)
     {
         Console.WriteLine(
-            $"MobCat update check failed: {ex.Message}");
+            $"MobCat database update failed: {ex.Message}");
+
+        Console.WriteLine(
+            $"Database: {mobCatClient.DatabasePath}");
     }
 
-    Pause();
+    Console.WriteLine();
 }
 
-static async Task CheckMobCatAtStartupAsync()
+static async Task CheckX360DbAtStartupAsync()
 {
+    var x360Client = new X360DbClient();
+
     Console.WriteLine(
-        "Checking MobCat database...");
+        "Checking x360db for database update...");
 
-    try
-    {
-        var mobCatClient =
-            new MobCatClient();
+    Console.WriteLine(
+        "Reading x360db metadata...");
 
-        MobCatUpdateResult result =
-            await mobCatClient.CheckForUpdateAndInstallAsync();
+    X360DbUpdateResult result =
+        await x360Client.CheckForUpdateAndInstallAsync();
 
-        if (result.Updated)
-        {
-            Console.WriteLine(
-                "MobCat database updated automatically.");
+    Console.WriteLine(result.Reason);
 
-            if (result.LocalInfo != null)
-            {
-                Console.WriteLine(
-                    $"  Records: {result.LocalInfo.RecordCount:N0}");
-            }
-        }
-        else
-        {
-            Console.WriteLine(
-                $"  {result.Reason}");
-        }
-    }
-    catch (Exception ex)
-    {
-        /*
-         * MobCat is an enhancement to the toolkit, not a reason
-         * to prevent the rest of the application from starting.
-         */
-        Console.WriteLine(
-            $"  MobCat update check failed: {ex.Message}");
+    Console.WriteLine(
+        $"Game records: {result.RecordCount:N0}");
 
-        Console.WriteLine(
-            "  Continuing with the local MobCat database.");
-    }
+    Console.WriteLine(
+        $"Database: {x360Client.IndexPath}");
 
     Console.WriteLine();
 }
@@ -354,15 +392,22 @@ static async Task ForceMobCatUpdateAsync()
             new MobCatClient();
 
         Console.WriteLine(
-            "Updating MobCat database...");
-        Console.WriteLine();
+            "Reading MobCat metadata...");
 
-        await mobCatClient.DownloadDatabaseAsync(
-            true);
+        bool updated =
+            await mobCatClient.DownloadDatabaseAsync(
+                true);
 
-        Console.WriteLine();
+        int recordCount =
+            await mobCatClient.GetRecordCountAsync();
+
         Console.WriteLine(
-            "MobCat database updated successfully.");
+            updated
+                ? "MobCat database updated successfully."
+                : "MobCat database is already up to date.");
+
+        Console.WriteLine(
+            $"Game records: {recordCount:N0}");
 
         Console.WriteLine(
             $"Database: {mobCatClient.DatabasePath}");
@@ -370,419 +415,598 @@ static async Task ForceMobCatUpdateAsync()
     catch (Exception ex)
     {
         Console.WriteLine();
+
         Console.WriteLine(
             $"MobCat database update failed: {ex.Message}");
     }
-    }
+}
 
 internal static void PrintGameInformation(GameImageInfo game)
+{
+    Console.WriteLine($"ISO: {game.FileName}");
+    Console.WriteLine($"Size: {FormatSize(game.FileSize)}");
+    Console.WriteLine();
+
+    Console.WriteLine(
+        $"Game Executable Information ({(game.Platform == XboxPlatform.OriginalXbox ? "default.xbe" : "default.xex")}):");
+
+    Console.WriteLine($"  Title: {game.Title}");
+    Console.WriteLine($"  Title ID: {game.TitleId}");
+    Console.WriteLine($"  Platform: {(game.Platform == XboxPlatform.OriginalXbox ? "Original Xbox" : game.Platform.ToString())}");
+    Console.WriteLine($"  Executable: {game.Executable}");
+
+
+    if (game.Platform == XboxPlatform.Xbox360)
     {
-        Console.WriteLine($"ISO: {game.FileName}");
-        Console.WriteLine($"Size: {FormatSize(game.FileSize)}");
-        Console.WriteLine();
+        Console.WriteLine($"  Media ID: {game.MediaId}");
+        Console.WriteLine($"  Execution Version: {game.XexVersion}");
+        Console.WriteLine($"  Base Version: {game.XexBaseVersion}");
 
-        Console.WriteLine("Game Information:");
-        Console.WriteLine($"Title: {game.Title}");
-        Console.WriteLine($"Title ID: {game.TitleId}");
-        Console.WriteLine($"Platform: {(game.Platform == XboxPlatform.OriginalXbox ? "Original Xbox" : game.Platform.ToString())}");
-        Console.WriteLine($"Executable: {game.Executable}");
-
-        if (game.Platform == XboxPlatform.Xbox360)
+        if (game.XexDiscCount > 0)
         {
-            Console.WriteLine($"Media ID: {game.MediaId}");
-            Console.WriteLine($"XEX Execution Version: 0x{game.XexVersion:X8}");
-            Console.WriteLine($"XEX Base Version: 0x{game.XexBaseVersion:X8}");
-            Console.WriteLine($"XEX Platform: 0x{game.XexPlatform:X2}");
-            Console.WriteLine($"XEX Executable Type: 0x{game.XexExecutableType:X2}");
-
-            if (game.XexDiscCount > 0)
-            {
-                Console.WriteLine(
-                    $"XEX Disc: {game.XexDiscNumber} of {game.XexDiscCount}");
-            }
-            else
-            {
-                Console.WriteLine($"XEX Disc Number: {game.XexDiscNumber}");
-            }
-
-            Console.WriteLine($"XEX Save Game ID: 0x{game.XexSaveGameId:X8}");
-
-            Console.WriteLine($"XEX Region Mask: 0x{game.XexRegionMask:X8}");
-
-            if (!string.IsNullOrWhiteSpace(game.XexRegion))
-            {
-                Console.WriteLine($"XEX Region: {game.XexRegion}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(game.ReleaseRegion))
-            {
-                Console.WriteLine($"Release Region: {game.ReleaseRegion}");
-            }
+            Console.WriteLine(
+                $"  Disc: {game.XexDiscNumber} of {game.XexDiscCount}");
         }
-        else if (game.Platform == XboxPlatform.OriginalXbox)
+
+        if (!string.IsNullOrWhiteSpace(game.XexRegion))
         {
-            Console.WriteLine($"Serial: {game.SerialNumber}");
-            Console.WriteLine($"XMID: {game.Xmid}");
-
-            string? publisherId = PublisherLookup.GetPublisherId(game.Xmid);
-            string? publisherName = PublisherLookup.GetPublisherName(game.Xmid);
-            string? gameId = PublisherLookup.GetGameId(game.Xmid);
-            string? skuId = PublisherLookup.GetSkuId(game.Xmid);
-            string? regionId = PublisherLookup.GetRegionId(game.Xmid);
-
-            if (!string.IsNullOrWhiteSpace(publisherId))
-                Console.WriteLine($"Publisher ID: {publisherId}");
-
-            if (!string.IsNullOrWhiteSpace(publisherName))
-                Console.WriteLine($"Publisher: {publisherName}");
-
-            if (!string.IsNullOrWhiteSpace(gameId))
-                Console.WriteLine($"Game ID: {gameId}");
-
-            if (!string.IsNullOrWhiteSpace(skuId))
-                Console.WriteLine($"SKU ID: {skuId}");
-
-            if (!string.IsNullOrWhiteSpace(regionId))
-                Console.WriteLine($"Region ID: {regionId}");
-
-            Console.WriteLine($"XBE MD5: {game.XbeMd5}");
-
-            var alternateTitleIds = game.AlternateTitleIds
-                .Where(id => id != 0)
-                .ToList();
-
-            if (alternateTitleIds.Count > 0)
+            string region = game.XexRegion switch
             {
-                Console.WriteLine("Alternate Title IDs:");
+                "NTSC-U" => "North America (NTSC-U)",
+                "NTSC-J" => "Japan (NTSC-J)",
+                "PAL" => "PAL",
+                "All Regions" => "All Regions",
+                "Japan" => "Japan",
+                "China" => "China",
+                "Australia/New Zealand" => "Australia/New Zealand",
+                _ => game.XexRegion
+            };
 
-                foreach (var alternateTitleId in alternateTitleIds)
-                    Console.WriteLine($"  {alternateTitleId:X8}");
-            }
+            Console.WriteLine($"  Region Compatibility: {region}");
+        }
 
-            Console.WriteLine($"XBE Region: {game.XbeRegion}");
-            Console.WriteLine($"Allowed Media: 0x{game.AllowedMedia:X8}");
+        if (!string.IsNullOrWhiteSpace(game.ReleaseRegion))
+        {
+            Console.WriteLine($"  Release Region: {game.ReleaseRegion}");
+        }
+    }
+        
+    else if (game.Platform == XboxPlatform.OriginalXbox)
+    {
+        Console.WriteLine($"  Serial: {game.SerialNumber}");
+        Console.WriteLine($"  XMID: {game.Xmid}");
 
-            PrintXbeAllowedMedia(game.AllowedMedia);
+        string? publisherId = PublisherLookup.GetPublisherId(game.Xmid);
+        string? publisherName = PublisherLookup.GetPublisherName(game.Xmid);
+        string? gameId = PublisherLookup.GetGameId(game.Xmid);
+        string? skuId = PublisherLookup.GetSkuId(game.Xmid);
+        string? regionId = PublisherLookup.GetRegionId(game.Xmid);
 
-            Console.WriteLine($"XBE Title Version: {game.Version}");
-            Console.WriteLine($"XBE Header Size: {FormatSize(game.XbeSizeOfHeaders)}");
-            Console.WriteLine($"XBE Image Size: {FormatSize(game.XbeSizeOfImage)}");
-            Console.WriteLine($"XBE Build Date: {FormatXbeTimestamp(game.XbeTimeDate)}");
-            Console.WriteLine($"XBE Sections: {game.XbeNumberOfSections}");
-            Console.WriteLine("XBE Init Flags:");
+        if (!string.IsNullOrWhiteSpace(publisherId))
+            Console.WriteLine($"  Publisher ID: {publisherId}");
 
-            foreach (string line in FormatXbeInitFlags(game.XbeInitFlags)
-                         .Split(Environment.NewLine))
+        if (!string.IsNullOrWhiteSpace(publisherName))
+            Console.WriteLine($"  Publisher: {publisherName}");
+
+        if (!string.IsNullOrWhiteSpace(gameId))
+            Console.WriteLine($"  Game ID: {gameId}");
+
+        if (!string.IsNullOrWhiteSpace(skuId))
+            Console.WriteLine($"  SKU ID: {skuId}");
+
+        if (!string.IsNullOrWhiteSpace(regionId))
+            Console.WriteLine($"  Region ID: {regionId}");
+
+        Console.WriteLine($"  XBE MD5: {game.XbeMd5}");
+
+        var alternateTitleIds = game.AlternateTitleIds
+            .Where(id => id != 0)
+            .ToList();
+
+        if (alternateTitleIds.Count > 0)
+        {
+            Console.WriteLine("  Alternate Title IDs:");
+
+            foreach (var alternateTitleId in alternateTitleIds)
+                Console.WriteLine($"  {alternateTitleId:X8}");
+        }
+
+        Console.WriteLine($"  XBE Region: {game.XbeRegion}");
+        Console.WriteLine($"  Allowed Media: 0x{game.AllowedMedia:X8}");
+
+        PrintXbeAllowedMedia(game.AllowedMedia);
+
+        Console.WriteLine($"  XBE Title Version: {game.Version}");
+        Console.WriteLine($"  XBE Header Size: {FormatSize(game.XbeSizeOfHeaders)}");
+        Console.WriteLine($"  XBE Image Size: {FormatSize(game.XbeSizeOfImage)}");
+        Console.WriteLine($"  XBE Build Date: {FormatXbeTimestamp(game.XbeTimeDate)}");
+        Console.WriteLine($"  XBE Sections: {game.XbeNumberOfSections}");
+        Console.WriteLine("  XBE Init Flags:");
+
+        foreach (string line in FormatXbeInitFlags(game.XbeInitFlags)
+                        .Split(Environment.NewLine))
+        {
+            Console.WriteLine($"    {line}");
+        }
+
+        Console.WriteLine($"  XBE Library Version Count: {game.XbeLibraryVersionCount}");
+
+        PrintXbeLibraries(game.XbeLibraryVersions, "");
+
+        if (game.CdxGames.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("CDX Games:");
+
+            foreach (var cdxGame in game.CdxGames)
             {
-                Console.WriteLine($"  {line}");
-            }
+                Console.WriteLine($"  {cdxGame.DisplayName}");
+                Console.WriteLine($"    Executable: {cdxGame.FileName}");
+                Console.WriteLine($"    Title: {cdxGame.Title}");
+                Console.WriteLine($"    Title ID: {cdxGame.TitleId}");
+                Console.WriteLine($"    Serial: {cdxGame.SerialNumber}");
+                Console.WriteLine($"    XMID: {cdxGame.Xmid}");
+                Console.WriteLine($"    XBE MD5: {cdxGame.XbeMd5}");
+                Console.WriteLine($"    XBE Region: {cdxGame.XbeRegion}");
+                Console.WriteLine($"    XBE Title Version: {cdxGame.Version}");
+                Console.WriteLine($"    XBE Header Size: {FormatSize(cdxGame.XbeSizeOfHeaders)}");
+                Console.WriteLine($"    XBE Image Size: {FormatSize(cdxGame.XbeSizeOfImage)}");
+                Console.WriteLine($"    XBE Build Date: {FormatXbeTimestamp(cdxGame.XbeTimeDate)}");
+                Console.WriteLine($"    XBE Sections: {cdxGame.XbeNumberOfSections}");
+                Console.WriteLine("    XBE Init Flags:");
 
-            Console.WriteLine($"XBE Library Version Count: {game.XbeLibraryVersionCount}");
-
-            PrintXbeLibraries(game.XbeLibraryVersions, "");
-
-            if (game.CdxGames.Count > 0)
-            {
-                Console.WriteLine();
-                Console.WriteLine("CDX Games:");
-
-                foreach (var cdxGame in game.CdxGames)
+                foreach (string line in FormatXbeInitFlags(cdxGame.XbeInitFlags)
+                                .Split(Environment.NewLine))
                 {
-                    Console.WriteLine($"  {cdxGame.DisplayName}");
-                    Console.WriteLine($"    Executable: {cdxGame.FileName}");
-                    Console.WriteLine($"    Title: {cdxGame.Title}");
-                    Console.WriteLine($"    Title ID: {cdxGame.TitleId}");
-                    Console.WriteLine($"    Serial: {cdxGame.SerialNumber}");
-                    Console.WriteLine($"    XMID: {cdxGame.Xmid}");
-                    Console.WriteLine($"    XBE MD5: {cdxGame.XbeMd5}");
-                    Console.WriteLine($"    XBE Region: {cdxGame.XbeRegion}");
-                    Console.WriteLine($"    XBE Title Version: {cdxGame.Version}");
-                    Console.WriteLine($"    XBE Header Size: {FormatSize(cdxGame.XbeSizeOfHeaders)}");
-                    Console.WriteLine($"    XBE Image Size: {FormatSize(cdxGame.XbeSizeOfImage)}");
-                    Console.WriteLine($"    XBE Build Date: {FormatXbeTimestamp(cdxGame.XbeTimeDate)}");
-                    Console.WriteLine($"    XBE Sections: {cdxGame.XbeNumberOfSections}");
-                    Console.WriteLine("    XBE Init Flags:");
-
-                    foreach (string line in FormatXbeInitFlags(cdxGame.XbeInitFlags)
-                                 .Split(Environment.NewLine))
-                    {
-                        Console.WriteLine($"      {line}");
-                    }
-
-                    Console.WriteLine($"    XBE Library Version Count: {cdxGame.XbeLibraryVersionCount}");
-
-                    PrintXbeLibraries(cdxGame.XbeLibraryVersions, "    ");
+                    Console.WriteLine($"      {line}");
                 }
+
+                Console.WriteLine($"    XBE Library Version Count: {cdxGame.XbeLibraryVersionCount}");
+
+                PrintXbeLibraries(cdxGame.XbeLibraryVersions, "    ");
             }
         }
     }
+}
 
 static async Task AnalyzeIsoAsync(
-    string isoPath)
+    string isoPath,
+    MainForm? form = null)
 {
-    isoPath =
-        isoPath.Trim().Trim('"');
+    isoPath = isoPath.Trim().Trim('"');
 
     if (!File.Exists(isoPath))
     {
-        Console.WriteLine(
-            "ISO file not found:");
-
-        Console.WriteLine(
-            isoPath);
-
+        Console.WriteLine("ISO file not found:");
+        Console.WriteLine(isoPath);
         return;
     }
 
+    form?.SetArtwork(null);
+    form?.StartActivity("Opening archive...");
+
     try
     {
-        using var source = ArchiveImageSource.Open(isoPath);
+        // Open the archive off the UI thread.
+        using var source =
+            await Task.Run(
+                () => ArchiveImageSource.Open(isoPath));
+
+        form?.UpdateActivity("Analyzing game image...");
 
         var analyzer = new XboxGameImageAnalyzer();
 
-        var game = analyzer.Analyze(
-            source.ImageStream,
-            source.ImageName,
-            source.ImageLength);
+        // Analyze the image off the UI thread.
+        var game =
+            await Task.Run(
+                () => analyzer.Analyze(
+                    source.ImageStream,
+                    source.ImageName,
+                    source.ImageLength));
 
         PrintGameInformation(game);
 
-        if (game.Platform == XboxPlatform.OriginalXbox &&
-            !string.IsNullOrWhiteSpace(game.Xmid))
-        {
-            Console.WriteLine();
-            Console.WriteLine(
-                "DBox Release Information (https://dbox.tools):");
+        form?.UpdateActivity("Looking up game information...");
 
-            try
-            {
-                var dboxClient =
-                    new DBoxClient();
+        await PrintDatabaseInformationAsync(game, form);
 
-                var dboxDisc =
-                    await dboxClient.GetDiscByXmidAsync(
-                        game.Xmid);
-
-                if (dboxDisc == null)
-                {
-                    Console.WriteLine(
-                        "  No DBox record found.");
-                }
-                else
-                {
-                    Console.WriteLine(
-                        $"  Redump ID: {dboxDisc.RedumpId?.ToString() ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Release: {dboxDisc.RedumpName ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  DAT Name: {dboxDisc.RedumpDatName ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Release Country: {dboxDisc.RedumpRegion ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Edition: {dboxDisc.RedumpEdition ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Media: {dboxDisc.RedumpMedia ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Category: {dboxDisc.RedumpCategory ?? "Unknown"}");
-
-                    string languages =
-                        string.IsNullOrWhiteSpace(
-                            dboxDisc.RedumpLanguages)
-                            ? "Not specified"
-                            : dboxDisc.RedumpLanguages;
-
-                    Console.WriteLine(
-                        $"  Languages: {languages}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(
-                    $"  DBox lookup failed: {ex.Message}");
-            }
-        }
-
-        if (game.Platform == XboxPlatform.Xbox360)
-        {
-            Console.WriteLine();
-            Console.WriteLine("DBox Xbox 360 Information (https://dbox.tools):");
-
-            try
-            {
-                var dboxClient = new DBoxClient();
-
-                string? dboxTitle =
-                    await dboxClient.GetTitleNameByTitleIdAsync(
-                        game.TitleId);
-
-                Console.WriteLine(
-                    $"  DBox Title: {dboxTitle ?? "No title record found"}");
-
-                var dboxDisc =
-                    await dboxClient.GetDiscByMediaIdAsync(
-                        game.MediaId);
-
-                if (dboxDisc == null)
-                {
-                    Console.WriteLine(
-                        "  No DBox disc record found for this Media ID.");
-                }
-                else
-                {
-                    Console.WriteLine(
-                        $"  Disc Release: {dboxDisc.RedumpName ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Release Region: {dboxDisc.RedumpRegion ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Edition: {dboxDisc.RedumpEdition ?? "Unknown"}");
-
-                    Console.WriteLine(
-                        $"  Languages: {dboxDisc.RedumpLanguages ?? "Not specified"}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(
-                    $"  DBox lookup failed: {ex.Message}");
-            }
-        }
-
-        if (game.Platform == XboxPlatform.OriginalXbox &&
-            !string.IsNullOrWhiteSpace(game.Xmid))
-        {
-            Console.WriteLine();
-            Console.WriteLine(
-                "MobCat Release Information (https://www.mobcat.zip/XboxIDs/):");
-
-            try
-            {
-                var mobCatClient =
-                    new MobCatClient();
-
-                bool databaseAvailable =
-                    await mobCatClient.EnsureDatabaseAsync();
-
-                if (!databaseAvailable)
-                {
-                    Console.WriteLine(
-                        "  MobCat database unavailable; lookup skipped.");
-                }
-                else
-                {
-                    var mobCatTitle =
-                        await mobCatClient.GetTitleByXmidAsync(
-                            game.Xmid);
-
-                    if (mobCatTitle == null)
-                    {
-                        Console.WriteLine(
-                            "  No MobCat record found.");
-                    }
-                    else
-                    {
-                        static string Display(
-                            string? value)
-                        {
-                            return string.IsNullOrWhiteSpace(value)
-                                ? "Not specified"
-                                : value;
-                        }
-
-                        Console.WriteLine(
-                            $"  Title ID: {Display(mobCatTitle.TitleId)}");
-
-                        Console.WriteLine(
-                            $"  Serial Number: {Display(mobCatTitle.SerialNumber)}");
-
-                        Console.WriteLine(
-                            $"  XMID: {Display(mobCatTitle.Xmid)}");
-
-                        Console.WriteLine(
-                            $"  Full Name: {Display(mobCatTitle.FullName)}");
-
-                        Console.WriteLine(
-                            $"  Title Name: {Display(mobCatTitle.TitleName)}");
-
-                        Console.WriteLine(
-                            $"  Filename: {Display(mobCatTitle.Filename)}");
-
-                        Console.WriteLine(
-                            $"  AKA: {Display(mobCatTitle.Aka)}");
-
-                        Console.WriteLine(
-                            $"  Features: {Display(mobCatTitle.Features)}");
-
-                        Console.WriteLine(
-                            $"  Publisher: {Display(mobCatTitle.Publisher)}");
-
-                        Console.WriteLine(
-                            $"  Region: {Display(mobCatTitle.Region)}");
-
-                        Console.WriteLine(
-                            $"  XBE Rating: {Display(mobCatTitle.XbeRating)}");
-
-                        Console.WriteLine(
-                            $"  Cover Rating: {Display(mobCatTitle.CoverRating)}");
-
-                        Console.WriteLine(
-                            $"  Cover Stats: {Display(mobCatTitle.CoverStats)}");
-
-                        Console.WriteLine(
-                            $"  UPC: {Display(mobCatTitle.Upc)}");
-
-                        Console.WriteLine(
-                            $"  Version: {Display(mobCatTitle.Version)}");
-
-                        Console.WriteLine(
-                            $"  Media Type: {Display(mobCatTitle.MediaType)}");
-
-                        Console.WriteLine(
-                            $"  Init Flags: {Display(mobCatTitle.InitFlags)}");
-
-                        Console.WriteLine(
-                            $"  Entry Point: {Display(mobCatTitle.EntryPoint)}");
-
-                        Console.WriteLine(
-                            $"  Cert Timestamp: {Display(mobCatTitle.CertTimestamp)}");
-
-                        Console.WriteLine(
-                            $"  XDK Version: {Display(mobCatTitle.XdkVersion)}");
-
-                        Console.WriteLine(
-                            $"  Redump MD5: {Display(mobCatTitle.RedumpMd5)}");
-
-                        Console.WriteLine(
-                            $"  XBE MD5: {Display(mobCatTitle.XbeMd5)}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(
-                    $"  MobCat lookup failed: {ex.Message}");
-            }
-        }
+        form?.ScrollOutputToTop();
     }
     catch (Exception ex)
     {
         Console.WriteLine();
-        Console.WriteLine(
-            "Analysis failed:");
-
-        Console.WriteLine(
-            ex.Message);
+        Console.WriteLine("Analysis failed:");
+        Console.WriteLine(ex.Message);
+    }
+    finally
+    {
+        form?.StopActivity();
     }
 }
 
-static async Task AnalyzeArchiveAsync(
+
+internal static async Task PrintDatabaseInformationAsync(
+    GameImageInfo game,
+    MainForm? form = null)
+{
+    // Original Xbox: load MobCat thumbnail artwork.
+    if (game.Platform == XboxPlatform.OriginalXbox &&
+        !string.IsNullOrWhiteSpace(game.Xmid) &&
+        form != null)
+    {
+        try
+        {
+            var artworkClient = new MobCatArtworkClient();
+
+            string? artworkPath =
+                await artworkClient.DownloadThumbnailAsync(
+                    game.Xmid);
+
+            if (!string.IsNullOrWhiteSpace(artworkPath))
+            {
+                form.SetArtwork(artworkPath);
+            }
+            else
+            {
+                Console.WriteLine(
+                    "  No Original Xbox thumbnail found in MobCat.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"  Original Xbox artwork lookup failed: {ex.Message}");
+        }
+    }
+
+    // Original Xbox: DBox database lookup.
+    if (game.Platform == XboxPlatform.OriginalXbox &&
+        !string.IsNullOrWhiteSpace(game.Xmid))
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            $"DBox Database Information (https://dbox.tools/titles/xbox/{game.TitleId}/):");
+
+        try
+        {
+            var dboxClient = new DBoxClient();
+
+            var dboxDisc =
+                await dboxClient.GetDiscByXmidAsync(game.Xmid);
+
+            if (dboxDisc == null)
+            {
+                Console.WriteLine("  No DBox record found.");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"  Redump ID: {dboxDisc.RedumpId?.ToString() ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Release: {dboxDisc.RedumpName ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  DAT Name: {dboxDisc.RedumpDatName ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Release Country: {dboxDisc.RedumpRegion ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Edition: {dboxDisc.RedumpEdition ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Media: {dboxDisc.RedumpMedia ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Category: {dboxDisc.RedumpCategory ?? "Unknown"}");
+
+                string languages =
+                    string.IsNullOrWhiteSpace(dboxDisc.RedumpLanguages)
+                        ? "Not specified"
+                        : dboxDisc.RedumpLanguages;
+
+                Console.WriteLine($"  Languages: {languages}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"  DBox lookup failed: {ex.Message}");
+        }
+    }
+
+    // Original Xbox: MobCat database lookup.
+    if (game.Platform == XboxPlatform.OriginalXbox &&
+        !string.IsNullOrWhiteSpace(game.Xmid))
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            $"MobCat Database Information (https://www.mobcat.zip/XboxIDs/title.php?{game.Xmid}):");
+
+        try
+        {
+            var mobCatClient = new MobCatClient();
+
+            bool databaseAvailable =
+                await mobCatClient.EnsureDatabaseAsync();
+
+            if (!databaseAvailable)
+            {
+                Console.WriteLine(
+                    "  MobCat database unavailable; lookup skipped.");
+            }
+            else
+            {
+                var mobCatTitle =
+                    await mobCatClient.GetTitleByXmidAsync(
+                        game.Xmid);
+
+                if (mobCatTitle == null)
+                {
+                    Console.WriteLine("  No MobCat record found.");
+                }
+                else
+                {
+                    static string Display(string? value)
+                    {
+                        return string.IsNullOrWhiteSpace(value)
+                            ? "Not specified"
+                            : value;
+                    }
+
+                    Console.WriteLine(
+                        $"  Title ID: {Display(mobCatTitle.TitleId)}");
+
+                    Console.WriteLine(
+                        $"  Serial Number: {Display(mobCatTitle.SerialNumber)}");
+
+                    Console.WriteLine(
+                        $"  XMID: {Display(mobCatTitle.Xmid)}");
+
+                    Console.WriteLine(
+                        $"  Full Name: {Display(mobCatTitle.FullName)}");
+
+                    Console.WriteLine(
+                        $"  Title Name: {Display(mobCatTitle.TitleName)}");
+
+                    Console.WriteLine(
+                        $"  Filename: {Display(mobCatTitle.Filename)}");
+
+                    Console.WriteLine(
+                        $"  AKA: {Display(mobCatTitle.Aka)}");
+
+                    Console.WriteLine(
+                        $"  Features: {Display(mobCatTitle.Features)}");
+
+                    Console.WriteLine(
+                        $"  Publisher: {Display(mobCatTitle.Publisher)}");
+
+                    Console.WriteLine(
+                        $"  Region: {Display(mobCatTitle.Region)}");
+
+                    Console.WriteLine(
+                        $"  XBE Rating: {Display(mobCatTitle.XbeRating)}");
+
+                    Console.WriteLine(
+                        $"  Cover Rating: {Display(mobCatTitle.CoverRating)}");
+
+                    Console.WriteLine(
+                        $"  Cover Stats: {Display(mobCatTitle.CoverStats)}");
+
+                    Console.WriteLine(
+                        $"  UPC: {Display(mobCatTitle.Upc)}");
+
+                    Console.WriteLine(
+                        $"  Version: {Display(mobCatTitle.Version)}");
+
+                    Console.WriteLine(
+                        $"  Media Type: {Display(mobCatTitle.MediaType)}");
+
+                    Console.WriteLine(
+                        $"  Init Flags: {Display(mobCatTitle.InitFlags)}");
+
+                    Console.WriteLine(
+                        $"  Entry Point: {Display(mobCatTitle.EntryPoint)}");
+
+                    Console.WriteLine(
+                        $"  Cert Timestamp: {Display(mobCatTitle.CertTimestamp)}");
+
+                    Console.WriteLine(
+                        $"  XDK Version: {Display(mobCatTitle.XdkVersion)}");
+
+                    Console.WriteLine(
+                        $"  Redump MD5: {Display(mobCatTitle.RedumpMd5)}");
+
+                    Console.WriteLine(
+                        $"  XBE MD5: {Display(mobCatTitle.XbeMd5)}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"  MobCat lookup failed: {ex.Message}");
+        }
+    }
+
+    // Xbox 360: DBox database lookup.
+    if (game.Platform == XboxPlatform.Xbox360)
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            $"DBox Database Information (https://dbox.tools/titles/xbox360/{game.TitleId}/):");
+
+        try
+        {
+            var dboxClient = new DBoxClient();
+
+            string? dboxTitle =
+                await dboxClient.GetTitleNameByTitleIdAsync(
+                    game.TitleId);
+
+            Console.WriteLine(
+                $"  DBox Title: {dboxTitle ?? "No title record found"}");
+
+            var dboxDisc =
+                await dboxClient.GetDiscByMediaIdAsync(
+                    game.MediaId);
+
+            if (dboxDisc == null)
+            {
+                Console.WriteLine(
+                    "  No DBox disc record found for this Media ID.");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"  Disc Release: {dboxDisc.RedumpName ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Release Region: {dboxDisc.RedumpRegion ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Edition: {dboxDisc.RedumpEdition ?? "Unknown"}");
+
+                Console.WriteLine(
+                    $"  Languages: {dboxDisc.RedumpLanguages ?? "Not specified"}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"  DBox lookup failed: {ex.Message}");
+        }
+    }
+
+    // Xbox 360: x360db local database lookup and artwork.
+    if (game.Platform == XboxPlatform.Xbox360)
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            "x360db Database Information (https://xenia-manager.github.io/x360db/):");
+
+            try
+        {
+            var x360DbClient = new X360DbClient();
+
+            bool databaseAvailable =
+                await x360DbClient.EnsureDatabaseAsync();
+
+            X360DbGame? x360Game = null;
+            X360DbGameInfo? x360Details = null;
+
+            if (databaseAvailable)
+            {
+                x360Game =
+                    await x360DbClient.GetGameAsync(
+                        game.TitleId,
+                        game.MediaId);
+
+                x360Details =
+                    await x360DbClient.GetDetailsAsync(
+                        game.TitleId);
+            }
+
+            static string DisplayX360(string? value)
+            {
+                return string.IsNullOrWhiteSpace(value)
+                    ? "Not specified"
+                    : value;
+            }
+
+            if (!databaseAvailable)
+            {
+                Console.WriteLine(
+                    "  Xbox 360 database unavailable.");
+            }
+            else if (x360Game == null && x360Details == null)
+            {
+                Console.WriteLine(
+                    "  No Xbox 360 database record found.");
+            }
+            else
+            {
+                string? title =
+                    x360Details?.Title?.Full
+                    ?? x360Game?.Title;
+
+                Console.WriteLine(
+                    $"  Title: {DisplayX360(title)}");
+
+                Console.WriteLine(
+                    $"  Title ID: {DisplayX360(x360Details?.Id ?? x360Game?.Id)}");
+
+                Console.WriteLine(
+                    $"  Developer: {DisplayX360(x360Details?.Developer ?? x360Game?.Developer)}");
+
+                Console.WriteLine(
+                    $"  Publisher: {DisplayX360(x360Details?.Publisher ?? x360Game?.Publisher)}");
+
+                Console.WriteLine(
+                    $"  Release Date: {DisplayX360(x360Details?.ReleaseDate ?? x360Game?.ReleaseDate)}");
+
+                string genres = string.Join(
+                    ", ",
+                    x360Details?.Genre ?? x360Game?.Genre ?? []);
+
+                Console.WriteLine(
+                    $"  Genre: {DisplayX360(genres)}");
+
+                Console.WriteLine(
+                    $"  User Rating: {DisplayX360(x360Details?.UserRating ?? x360Game?.UserRating)}");
+
+                if (x360Details?.Description != null)
+                {
+                    Console.WriteLine(
+                        $"  Description: {DisplayX360(x360Details.Description.Short ?? x360Details.Description.Full)}");
+                }
+
+                var matchingMedia =
+                    x360Details?.Media?.FirstOrDefault(
+                        media =>
+                            !string.IsNullOrWhiteSpace(game.MediaId) &&
+                            string.Equals(
+                                media.MediaId,
+                                game.MediaId,
+                                StringComparison.OrdinalIgnoreCase));
+
+                if (matchingMedia != null)
+                {
+                    Console.WriteLine(
+                        $"  Disc Title: {DisplayX360(matchingMedia.Title)}");
+
+                    Console.WriteLine(
+                        $"  Edition: {DisplayX360(matchingMedia.Edition)}");
+
+                    Console.WriteLine(
+                        $"  Region: {DisplayX360(matchingMedia.Region)}");
+                }
+
+                string? boxArtUrl =
+                    x360Details?.Artwork?.BoxArt
+                    ?? x360Game?.BoxArt;
+
+                string? artworkPath =
+                    await x360DbClient.DownloadBoxArtAsync(
+                        game.TitleId,
+                        boxArtUrl);
+
+                if (!string.IsNullOrWhiteSpace(artworkPath))
+                {
+                    form?.SetArtwork(artworkPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"  Xbox 360 database lookup failed: {ex.Message}");
+        }
+    }
+}
+
+    static async Task AnalyzeArchiveAsync(
     string archivePath)
 {
     archivePath =
@@ -1072,7 +1296,7 @@ static void PrintXbeLibraries(
     string indent)
 {
     Console.WriteLine(
-        $"{indent}XBE Library Versions:");
+        $"{indent}  XBE Library Versions:");
 
     foreach (var library in libraries)
     {
@@ -1105,7 +1329,7 @@ static void PrintXbeLibraries(
                 : "Retail";
 
         Console.WriteLine(
-            $"{indent}  {library.Name} " +
+            $"{indent}    {library.Name} " +
             $"{library.MajorVersion}." +
             $"{library.MinorVersion}." +
             $"{library.BuildVersion} " +
@@ -1151,14 +1375,14 @@ static void PrintXbeLibraries(
             0x80000000;
 
         Console.WriteLine(
-            "Documented Media:");
+            "  Documented Media:");
 
         foreach (var item in documented)
         {
             if ((media & item.Flag) != 0)
             {
                 Console.WriteLine(
-                    $"  {item.Name}");
+                    $"    {item.Name}");
             }
         }
 
@@ -1169,7 +1393,7 @@ static void PrintXbeLibraries(
         if (undocumented != 0)
         {
             Console.WriteLine(
-                $"Undocumented Media Bits: 0x{undocumented:X8}");
+                $"  Undocumented Media Bits: 0x{undocumented:X8}");
         }
     }
 }

@@ -156,14 +156,15 @@ public sealed class MobCatClient
         };
     }
 
-    public async Task DownloadDatabaseAsync(
+
+    public async Task<bool> DownloadDatabaseAsync(
         bool forceDownload,
         CancellationToken cancellationToken = default)
     {
         if (!forceDownload &&
             File.Exists(DatabasePath))
         {
-            return;
+            return false;
         }
 
         string temporaryDatabasePath =
@@ -214,6 +215,51 @@ public sealed class MobCatClient
                 await ValidateDatabaseAsync(
                     temporaryDatabasePath,
                     cancellationToken);
+
+            // Compare the downloaded database with the installed copy.
+            if (File.Exists(DatabasePath))
+            {
+                byte[] existingHash;
+                byte[] downloadedHash;
+
+                await using (FileStream existingStream =
+                    new FileStream(
+                        DatabasePath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        1024 * 64,
+                        FileOptions.SequentialScan))
+                {
+                    existingHash =
+                        await System.Security.Cryptography.SHA256.HashDataAsync(
+                            existingStream,
+                            cancellationToken);
+                }
+
+                await using (FileStream downloadedStream =
+                    new FileStream(
+                        temporaryDatabasePath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        1024 * 64,
+                        FileOptions.SequentialScan))
+                {
+                    downloadedHash =
+                        await System.Security.Cryptography.SHA256.HashDataAsync(
+                            downloadedStream,
+                            cancellationToken);
+                }
+
+                if (existingHash.SequenceEqual(downloadedHash))
+                {
+                    TryDelete(temporaryDatabasePath);
+                    TryDelete(temporaryMetadataPath);
+
+                    return false;
+                }
+            }
 
             RemoteDatabaseInfo remoteInfo;
 
@@ -269,6 +315,8 @@ public sealed class MobCatClient
                 temporaryMetadataPath,
                 MetadataPath,
                 true);
+
+            return true;
         }
         catch
         {
@@ -276,6 +324,20 @@ public sealed class MobCatClient
             TryDelete(temporaryMetadataPath);
             throw;
         }
+    }
+    public async Task<int> GetRecordCountAsync(
+    CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(DatabasePath))
+        {
+            throw new FileNotFoundException(
+                "MobCat database was not found.",
+                DatabasePath);
+        }
+
+        return await ValidateDatabaseAsync(
+            DatabasePath,
+            cancellationToken);
     }
 
     public async Task<MobCatTitle?> GetTitleByXmidAsync(
