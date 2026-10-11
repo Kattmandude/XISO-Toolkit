@@ -15,6 +15,7 @@ namespace XISO.Toolkit;
 
 public static class GameInstallationWorkflow
 {
+
     internal static async Task RunAsync(
         ToolkitConfiguration configuration,
         MainForm form)
@@ -40,256 +41,283 @@ public static class GameInstallationWorkflow
         if (string.IsNullOrWhiteSpace(selectedSourcePath))
             return;
 
-        form.SetArtwork(null);
-
-        // Clear old output before printing the analyzing message.
-        form.ClearOutput();
-
-        form.StartActivity("Opening archive...");
-
-        ArchiveImageSource archiveSource;
+        ArchiveImageSource? archiveSource = null;
 
         try
         {
-            // Open the archive in the background so the UI can animate.
-            archiveSource = await Task.Run(
-                () => ArchiveImageSource.Open(selectedSourcePath));
-        }
-        catch (Exception ex)
-        {
-            form.StopActivity();
+            InstallOptions options;
+            GameImageInfo game;
+            string title;
 
-            ShowMessage(
-                $"The selected file could not be opened as an Xbox image or supported archive.\n\n{ex.Message}",
-                "Installation",
-                MessageBoxIcon.Error);
-            return;
-        }
+            while (true)
+            {
+                form.SetArtwork(null);
+                form.ClearOutput();
+                form.StartActivity("Opening archive...");
 
-        using var archiveSourceLifetime = archiveSource;
+                try
+                {
+                    archiveSource = await Task.Run(
+                        () => ArchiveImageSource.Open(selectedSourcePath));
+                }
+                catch (Exception ex)
+                {
+                    ShowMessage(
+                        $"The selected file could not be opened as an Xbox image or supported archive.\n\n{ex.Message}",
+                        "Installation",
+                        MessageBoxIcon.Error);
+                    return;
+                }
+                finally
+                {
+                    form.StopActivity();
+                }
 
-        GameImageInfo game;
+                ArchiveImageSource currentSource = archiveSource!;
 
-        try
-        {
-            form.UpdateActivity("Analyzing game image...");
+                try
+                {
+                    form.StartActivity("Analyzing game image...");
 
-            Console.WriteLine($"Analyzing: {archiveSource.ImageName}");
+                    Console.WriteLine($"Analyzing: {currentSource.ImageName}");
 
-            var analyzer = new XboxGameImageAnalyzer();
+                    var analyzer = new XboxGameImageAnalyzer();
 
-            game = await Task.Run(
-                () => analyzer.Analyze(
-                    archiveSource.ImageStream,
-                    archiveSource.ImageName,
-                    archiveSource.ImageLength));
+                    game = await Task.Run(
+                        () => analyzer.Analyze(
+                            currentSource.ImageStream,
+                            currentSource.ImageName,
+                            currentSource.ImageLength));
 
-            Program.PrintGameInformation(game);
+                    Program.PrintGameInformation(game);
 
-            form.UpdateActivity("Looking up game information...");
+                    form.UpdateActivity("Looking up game information...");
 
-            await Program.PrintDatabaseInformationAsync(game, form);
+                    await Program.PrintDatabaseInformationAsync(game, form);
 
-            Console.WriteLine();
+                    Console.WriteLine();
 
-            form.ScrollOutputToTop();
-        }
-        catch (Exception ex)
-        {
-            form.StopActivity();
+                    form.ScrollOutputToTop();
+                }
+                catch (Exception ex)
+                {
+                    ShowMessage(
+                        $"The ISO could not be analyzed.\n\n{ex.Message}",
+                        "Installation",
+                        MessageBoxIcon.Error);
+                    return;
+                }
+                finally
+                {
+                    form.StopActivity();
+                }
 
-            ShowMessage(
-                $"The ISO could not be analyzed.\n\n{ex.Message}",
-                "Installation",
-                MessageBoxIcon.Error);
-            return;
+                if (game.Platform is not XboxPlatform.OriginalXbox
+                    and not XboxPlatform.Xbox360)
+                {
+                    ShowMessage(
+                        "The game's Xbox platform could not be identified. Installation was cancelled.",
+                        "Installation",
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+
+                MobCatTitle? mobCatTitle = null;
+
+                if (!string.IsNullOrWhiteSpace(game.Xmid))
+                {
+                    try
+                    {
+                        mobCatTitle = await new MobCatClient()
+                            .GetTitleByXmidAsync(game.Xmid);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(
+                            $"MobCat lookup unavailable: {ex.Message}");
+                    }
+                }
+
+                DBoxDisc? dboxDisc = null;
+
+                if (!string.IsNullOrWhiteSpace(game.Xmid))
+                {
+                    try
+                    {
+                        dboxDisc = await new DBoxClient()
+                            .GetDiscByXmidAsync(game.Xmid);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(
+                            $"DBox lookup unavailable: {ex.Message}");
+                    }
+                }
+
+                title = FirstNonEmpty(
+                    mobCatTitle?.FullName,
+                    mobCatTitle?.TitleName,
+                    game.Title,
+                    Path.GetFileNameWithoutExtension(currentSource.ImageName));
+
+                GameLibrary? library = configuration.GameLibraries
+                    .FirstOrDefault(item => item.Platform == game.Platform);
+
+                string defaultRoot = library?.Path ?? string.Empty;
+
+                await UpdateArtworkAsync(game, form);
+
+                InstallOptionsResult? result =
+                    await ShowInstallOptionsAsync(
+                        title,
+                        currentSource.ImageName,
+                        mobCatTitle?.Region,
+                        dboxDisc?.RedumpRegion,
+                        defaultRoot);
+
+                if (!string.IsNullOrWhiteSpace(result?.SelectedSourcePath))
+                {
+                    // Dispose the previous image before opening the replacement.
+                    archiveSource.Dispose();
+                    archiveSource = null;
+
+                    selectedSourcePath = result.SelectedSourcePath;
+                    continue;
+                }
+
+                if (result?.Options is null)
+                    return;
+
+                options = result.Options;
+                break;
+            }
+
+            ArchiveImageSource installationSource = archiveSource!;
+
+            bool extractFiles =
+                options.Method == InstallationMethod.ExtractGameFiles;
+
+            bool createGameFolder =
+                extractFiles || options.CreateGameFolderForImage;
+
+            string folderName = SanitizeFolderName(options.Name);
+
+            if (createGameFolder &&
+                string.IsNullOrWhiteSpace(folderName))
+            {
+                ShowMessage(
+                    "Enter a valid game folder name before installing.",
+                    "Installation",
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            string root;
+
+            try
+            {
+                root = Path.GetFullPath(options.Root);
+
+                if (!Directory.Exists(root))
+                {
+                    ShowMessage(
+                        "Choose an existing game library folder before continuing.",
+                        "Installation",
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowMessage(
+                    $"The game library path is invalid.\n\n{ex.Message}",
+                    "Installation",
+                    MessageBoxIcon.Error);
+                return;
+            }
+
+            string imageFileName = options.ImageFileName.Trim();
+
+            if (!extractFiles)
+            {
+                try
+                {
+                    ValidateImageFileName(imageFileName);
+                }
+                catch (ArgumentException ex)
+                {
+                    ShowMessage(
+                        $"{ex.Message}\n\nUse a filename ending in .iso or .xiso.",
+                        "Installation",
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+
+            string destinationFolder = createGameFolder
+                ? Path.Combine(root, folderName)
+                : root;
+
+            string outputPath = extractFiles
+                ? destinationFolder
+                : Path.Combine(destinationFolder, imageFileName);
+
+            if (createGameFolder &&
+                (Directory.Exists(destinationFolder) ||
+                 File.Exists(destinationFolder)))
+            {
+                ShowMessage(
+                    $"The destination folder already exists:\n\n{destinationFolder}\n\nNothing was overwritten.",
+                    "Installation",
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!extractFiles &&
+                (File.Exists(outputPath) || Directory.Exists(outputPath)))
+            {
+                ShowMessage(
+                    $"The ISO/XISO destination already exists:\n\n{outputPath}\n\nNothing was overwritten.",
+                    "Installation",
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            string methodDescription = extractFiles
+                ? "Extract game contents"
+                : "Keep ISO/XISO image";
+
+            var installer =
+                new XISO.OriginalXbox.Installation.GameInstaller();
+
+            var request = new GameInstallationRequest
+            {
+                IsoPath = installationSource.ImagePath,
+                DestinationFolder = destinationFolder,
+                Method = options.Method,
+                IsoFileName = extractFiles
+                    ? installationSource.ImageName
+                    : imageFileName,
+                CreateGameFolderForImage = createGameFolder
+            };
+
+            InstallationProgressDialog.Show(
+                title,
+                $"{methodDescription} ({game.Platform})",
+                selectedSourcePath,
+                outputPath,
+                (progress, cancellationToken) =>
+                    installer.Install(
+                        installationSource.ImageStream,
+                        installationSource.ImageName,
+                        request,
+                        progress,
+                        cancellationToken));
         }
         finally
         {
-            form.StopActivity();
+            archiveSource?.Dispose();
         }
-
-
-        if (game.Platform is not XboxPlatform.OriginalXbox
-            and not XboxPlatform.Xbox360)
-        {
-            ShowMessage(
-                "The game's Xbox platform could not be identified. Installation was cancelled.",
-                "Installation",
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        MobCatTitle? mobCatTitle = null;
-
-        if (!string.IsNullOrWhiteSpace(game.Xmid))
-        {
-            try
-            {
-                mobCatTitle = await new MobCatClient()
-                    .GetTitleByXmidAsync(game.Xmid);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"MobCat lookup unavailable: {ex.Message}");
-            }
-        }
-
-        DBoxDisc? dboxDisc = null;
-
-        if (!string.IsNullOrWhiteSpace(game.Xmid))
-        {
-            try
-            {
-                dboxDisc = await new DBoxClient()
-                    .GetDiscByXmidAsync(game.Xmid);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"DBox lookup unavailable: {ex.Message}");
-            }
-        }
-
-        string title = FirstNonEmpty(
-            mobCatTitle?.FullName,
-            mobCatTitle?.TitleName,
-            game.Title,
-            Path.GetFileNameWithoutExtension(archiveSource.ImageName));
-
-        GameLibrary? library = configuration.GameLibraries
-            .FirstOrDefault(item => item.Platform == game.Platform);
-
-        string defaultRoot = library?.Path ?? string.Empty;
-
-        InstallOptions? options = await ShowInstallOptionsAsync(
-            title,
-            archiveSource.ImageName,
-            mobCatTitle?.Region,
-            dboxDisc?.RedumpRegion,
-            defaultRoot);
-
-        if (options is null)
-            return;
-
-        bool extractFiles =
-            options.Method == InstallationMethod.ExtractGameFiles;
-
-        bool createGameFolder =
-            extractFiles || options.CreateGameFolderForImage;
-
-        string folderName = SanitizeFolderName(options.Name);
-
-        if (createGameFolder && string.IsNullOrWhiteSpace(folderName))
-        {
-            ShowMessage(
-                "Enter a valid game folder name before installing.",
-                "Installation",
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        string root;
-
-        try
-        {
-            root = Path.GetFullPath(options.Root);
-
-            if (!Directory.Exists(root))
-            {
-                ShowMessage(
-                    "Choose an existing game library folder before continuing.",
-                    "Installation",
-                    MessageBoxIcon.Warning);
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowMessage(
-                $"The game library path is invalid.\n\n{ex.Message}",
-                "Installation",
-                MessageBoxIcon.Error);
-            return;
-        }
-
-        string imageFileName = options.ImageFileName.Trim();
-
-        if (!extractFiles)
-        {
-            try
-            {
-                ValidateImageFileName(imageFileName);
-            }
-            catch (ArgumentException ex)
-            {
-                ShowMessage(
-                    $"{ex.Message}\n\nUse a filename ending in .iso or .xiso.",
-                    "Installation",
-                    MessageBoxIcon.Warning);
-                return;
-            }
-        }
-
-        string destinationFolder = createGameFolder
-            ? Path.Combine(root, folderName)
-            : root;
-
-        string outputPath = extractFiles
-            ? destinationFolder
-            : Path.Combine(destinationFolder, imageFileName);
-
-        if (createGameFolder &&
-            (Directory.Exists(destinationFolder) ||
-             File.Exists(destinationFolder)))
-        {
-            ShowMessage(
-                $"The destination folder already exists:\n\n{destinationFolder}\n\nNothing was overwritten.",
-                "Installation",
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        if (!extractFiles &&
-            (File.Exists(outputPath) || Directory.Exists(outputPath)))
-        {
-            ShowMessage(
-                $"The ISO/XISO destination already exists:\n\n{outputPath}\n\nNothing was overwritten.",
-                "Installation",
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-
-        string methodDescription = extractFiles
-            ? "Extract game contents"
-            : "Keep ISO/XISO image";
-
-        var installer =
-            new XISO.OriginalXbox.Installation.GameInstaller();
-
-        var request = new GameInstallationRequest
-        {
-            IsoPath = archiveSource.ImagePath,
-            DestinationFolder = destinationFolder,
-            Method = options.Method,
-            IsoFileName = extractFiles
-                ? archiveSource.ImageName
-                : imageFileName,
-            CreateGameFolderForImage = createGameFolder
-        };
-
-        InstallationProgressDialog.Show(
-            title,
-            $"{methodDescription} ({game.Platform})",
-            selectedSourcePath,
-            outputPath,
-            (progress, cancellationToken) =>
-                installer.Install(
-                    archiveSource.ImageStream,
-                    archiveSource.ImageName,
-                    request,
-                    progress,
-                    cancellationToken));
     }
 
     private static async Task UpdateArtworkAsync(
@@ -351,14 +379,14 @@ public static class GameInstallationWorkflow
         }
     }
 
-    private static async Task<InstallOptions?> ShowInstallOptionsAsync(
+    private static async Task<InstallOptionsResult?> ShowInstallOptionsAsync(
         string title,
         string imageName,
         string? region,
         string? releaseCountry,
         string defaultRoot)
     {
-        var completion = new TaskCompletionSource<InstallOptions?>(
+        var completion = new TaskCompletionSource<InstallOptionsResult?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         string? usableRegion = string.IsNullOrWhiteSpace(region)
@@ -837,6 +865,36 @@ public static class GameInstallationWorkflow
             DialogResult = DialogResult.None
         };
 
+        var selectDifferentFileButton = new Button
+        {
+            Text = "Select Different File...",
+            Left = 15,
+            Top = 610,
+            Width = 180,
+            DialogResult = DialogResult.None
+        };
+
+        selectDifferentFileButton.Click += (_, _) =>
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "Select a different Xbox game ISO",
+                Filter = "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|Disc images (*.iso;*.xiso)|*.iso;*.xiso|Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog(form) != DialogResult.OK)
+                return;
+
+            completion.TrySetResult(
+                new InstallOptionsResult(
+                    null,
+                    dialog.FileName));
+
+            form.Close();
+        };
+
         form.Controls.AddRange(
         [
             namingGroup,
@@ -852,6 +910,7 @@ public static class GameInstallationWorkflow
             browseButton,
             resetButton,
             resetImageNameButton,
+            selectDifferentFileButton,
             installButton,
             cancelButton
         ]);
@@ -882,12 +941,14 @@ public static class GameInstallationWorkflow
                 : InstallationMethod.MoveIsoImage;
 
             completion.TrySetResult(
-                new InstallOptions(
-                    selectedName,
-                    selectedRoot,
-                    method,
-                    selectedImageName,
-                    gameFolderRadio.Checked));
+                new InstallOptionsResult(
+                    new InstallOptions(
+                        selectedName,
+                        selectedRoot,
+                        method,
+                        selectedImageName,
+                        gameFolderRadio.Checked),
+                    null));
 
             form.Close();
         };
@@ -1047,6 +1108,10 @@ public static class GameInstallationWorkflow
         InstallationMethod Method,
         string ImageFileName,
         bool CreateGameFolderForImage);
+
+    private sealed record InstallOptionsResult(
+        InstallOptions? Options,
+        string? SelectedSourcePath);
 
     private static string SanitizeFolderName(string value)
     {
