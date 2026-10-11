@@ -140,17 +140,36 @@ public static class GameInstallationWorkflow
 
                 DBoxDisc? dboxDisc = null;
 
+                var dboxClient = new DBoxClient();
+
                 if (!string.IsNullOrWhiteSpace(game.Xmid))
                 {
                     try
                     {
-                        dboxDisc = await new DBoxClient()
-                            .GetDiscByXmidAsync(game.Xmid);
+                        dboxDisc = await dboxClient.GetDiscByXmidAsync(
+                            game.Xmid);
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine(
-                            $"DBox lookup unavailable: {ex.Message}");
+                            $"DBox XMID lookup unavailable: {ex.Message}");
+                    }
+                }
+
+                // If the XMID lookup did not find a disc, try the Media ID.
+                // This is particularly useful for Xbox 360 XEX files.
+                if (dboxDisc is null &&
+                    !string.IsNullOrWhiteSpace(game.MediaId))
+                {
+                    try
+                    {
+                        dboxDisc = await dboxClient.GetDiscByMediaIdAsync(
+                            game.MediaId);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(
+                            $"DBox Media ID lookup unavailable: {ex.Message}");
                     }
                 }
 
@@ -167,12 +186,43 @@ public static class GameInstallationWorkflow
 
                 await UpdateArtworkAsync(game, form);
 
+                string? x360DbRegion = null;
+
+                if (game.Platform == XboxPlatform.Xbox360 &&
+                    !string.IsNullOrWhiteSpace(game.TitleId))
+                {
+                    try
+                    {
+                        var x360DbClient = new X360DbClient();
+
+                        var x360Details = await x360DbClient.GetDetailsAsync(
+                            game.TitleId);
+
+                        var matchingMedia = x360Details?.Media?.FirstOrDefault(
+                            media =>
+                                !string.IsNullOrWhiteSpace(game.MediaId) &&
+                                string.Equals(
+                                    media.MediaId,
+                                    game.MediaId,
+                                    StringComparison.OrdinalIgnoreCase));
+
+                        x360DbRegion = matchingMedia?.Region;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(
+                            $"X360DB region lookup unavailable: {ex.Message}");
+                    }
+                }
+
                 InstallOptionsResult? result =
                     await ShowInstallOptionsAsync(
                         title,
                         currentSource.ImageName,
                         mobCatTitle?.Region,
                         dboxDisc?.RedumpRegion,
+                        x360DbRegion,
+                        game.Platform,
                         defaultRoot);
 
                 if (!string.IsNullOrWhiteSpace(result?.SelectedSourcePath))
@@ -384,6 +434,8 @@ public static class GameInstallationWorkflow
         string imageName,
         string? region,
         string? releaseCountry,
+        string? x360DbRegion,
+        XboxPlatform platform,
         string defaultRoot)
     {
         var completion = new TaskCompletionSource<InstallOptionsResult?>(
@@ -418,6 +470,7 @@ public static class GameInstallationWorkflow
             MinimizeBox = false
         };
 
+
         var namingGroup = new GroupBox
         {
             Text = "Game Naming Suffix",
@@ -432,9 +485,17 @@ public static class GameInstallationWorkflow
             Text = "No suffix",
             Left = 15,
             Top = 22,
-            Width = 200,
+            Width = 600,
             Checked = true
         };
+
+        string? usableX360DbRegion =
+            string.IsNullOrWhiteSpace(x360DbRegion)
+                ? null
+                : x360DbRegion.Trim();
+
+        bool isOriginalXbox = platform == XboxPlatform.OriginalXbox;
+        bool isXbox360 = platform == XboxPlatform.Xbox360;
 
         var regionRadio = new RadioButton
         {
@@ -444,7 +505,8 @@ public static class GameInstallationWorkflow
             Left = 15,
             Top = 47,
             Width = 600,
-            Enabled = usableRegion is not null
+            Visible = isOriginalXbox,
+            Enabled = isOriginalXbox && usableRegion is not null
         };
 
         var countryRadio = new RadioButton
@@ -455,7 +517,32 @@ public static class GameInstallationWorkflow
             Left = 15,
             Top = 72,
             Width = 600,
-            Enabled = usableCountry is not null
+            Visible = isOriginalXbox,
+            Enabled = isOriginalXbox && usableCountry is not null
+        };
+
+        var dboxRegionRadio = new RadioButton
+        {
+            Text = usableCountry is null
+                ? "DBox region (unavailable)"
+                : $"DBox region: {usableCountry}",
+            Left = 15,
+            Top = 47,
+            Width = 600,
+            Visible = isXbox360,
+            Enabled = isXbox360 && usableCountry is not null
+        };
+
+        var x360DbRegionRadio = new RadioButton
+        {
+            Text = usableX360DbRegion is null
+                ? "X360DB region (unavailable)"
+                : $"X360DB region: {usableX360DbRegion}",
+            Left = 15,
+            Top = 72,
+            Width = 600,
+            Visible = isXbox360,
+            Enabled = isXbox360 && usableX360DbRegion is not null
         };
 
         var countryFormatGroup = new GroupBox
@@ -494,6 +581,16 @@ public static class GameInstallationWorkflow
         namingGroup.Controls.AddRange(
         [
             noSuffixRadio,
+            countryRadio,
+            regionRadio,
+            dboxRegionRadio,
+            x360DbRegionRadio,
+            countryFormatGroup
+        ]);
+
+        namingGroup.Controls.AddRange(
+        [
+            noSuffixRadio,
             regionRadio,
             countryRadio,
             countryFormatGroup
@@ -513,6 +610,21 @@ public static class GameInstallationWorkflow
                 return fullCountryRadio.Checked
                     ? usableCountry
                     : GetCountryListCodes(usableCountry);
+            }
+
+            if (dboxRegionRadio.Checked && usableCountry is not null)
+            {
+                return fullCountryRadio.Checked
+                    ? usableCountry
+                    : GetCountryListCodes(usableCountry);
+            }
+
+            if (x360DbRegionRadio.Checked &&
+                usableX360DbRegion is not null)
+            {
+                return fullCountryRadio.Checked
+                    ? usableX360DbRegion
+                    : GetCountryListCodes(usableX360DbRegion);
             }
 
             return null;
@@ -698,8 +810,11 @@ public static class GameInstallationWorkflow
         void RefreshNamingOptions()
         {
             countryFormatGroup.Enabled =
-                !noSuffixRadio.Checked &&
-                (regionRadio.Checked || countryRadio.Checked);
+            !noSuffixRadio.Checked &&
+            (regionRadio.Checked ||
+             countryRadio.Checked ||
+             dboxRegionRadio.Checked ||
+             x360DbRegionRadio.Checked);
 
             nameBox.Text = MakeAutomaticName();
 
@@ -725,22 +840,28 @@ public static class GameInstallationWorkflow
                 RefreshNamingOptions();
         };
 
+        dboxRegionRadio.CheckedChanged += (_, _) =>
+        {
+            if (dboxRegionRadio.Checked)
+                RefreshNamingOptions();
+        }; 
+        
+        x360DbRegionRadio.CheckedChanged += (_, _) =>
+        {
+            if (x360DbRegionRadio.Checked)
+                RefreshNamingOptions();
+        };
+
         fullCountryRadio.CheckedChanged += (_, _) =>
         {
-            if (fullCountryRadio.Checked &&
-                (countryRadio.Checked || regionRadio.Checked))
-            {
+            if (fullCountryRadio.Checked)
                 RefreshNamingOptions();
-            }
         };
 
         countryCodeRadio.CheckedChanged += (_, _) =>
         {
-            if (countryCodeRadio.Checked &&
-                (countryRadio.Checked || regionRadio.Checked))
-            {
+            if (countryCodeRadio.Checked)
                 RefreshNamingOptions();
-            }
         };
 
         applySuffixToImageCheckBox.CheckedChanged += (_, _) =>
@@ -818,35 +939,6 @@ public static class GameInstallationWorkflow
                 rootBox.Text = folderDialog.SelectedPath;
         };
 
-        var resetButton = new Button
-        {
-            Text = "Reset Folder Name",
-            Left = 15,
-            Top = 565,
-            Width = 145
-        };
-
-        resetButton.Click += (_, _) =>
-        {
-            nameBox.Text = MakeAutomaticName();
-        };
-
-        var resetImageNameButton = new Button
-        {
-            Text = "Reset ISO/XISO Filename",
-            Left = 170,
-            Top = 565,
-            Width = 190
-        };
-
-        resetImageNameButton.Click += (_, _) =>
-        {
-            imageNameBox.Text = originalImageName;
-
-            if (applySuffixToImageCheckBox.Checked)
-                RefreshImageNameSuffix();
-        };
-
         var installButton = new Button
         {
             Text = "Install",
@@ -869,7 +961,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Select Different File...",
             Left = 15,
-            Top = 610,
+            Top = 565,
             Width = 180,
             DialogResult = DialogResult.None
         };
@@ -908,8 +1000,6 @@ public static class GameInstallationWorkflow
             rootLabel,
             rootBox,
             browseButton,
-            resetButton,
-            resetImageNameButton,
             selectDifferentFileButton,
             installButton,
             cancelButton
@@ -1041,12 +1131,24 @@ public static class GameInstallationWorkflow
             if (item.Length == 0)
                 continue;
 
-            parts[i] = string.Equals(
+            if (string.Equals(
                     item,
-                    "Europe",
-                    StringComparison.OrdinalIgnoreCase)
-                ? "EU"
-                : GetCountryCodeOrOriginal(item);
+                    "World",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                parts[i] = "World";
+            }
+            else if (string.Equals(
+                         item,
+                         "Europe",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                parts[i] = "EU";
+            }
+            else
+            {
+                parts[i] = GetCountryCodeOrOriginal(item);
+            }
         }
 
         return string.Join(
