@@ -8,6 +8,9 @@ using System.Windows.Forms;
 
 internal static class Program
 {
+    private static string? _lastAnalyzedSourcePath;
+    private static GameImageInfo? _lastAnalyzedGame;
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -126,6 +129,14 @@ internal static class Program
 
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
+            return;
+        }
+
+        // If this exact file is already analyzed, keep the
+        // existing output and skip the scroll animation.
+        if (TryGetCachedAnalysis(selectedPath, out _))
+        {
+            form.SuppressNextActionScrollToTop();
             return;
         }
 
@@ -582,8 +593,17 @@ static async Task AnalyzeIsoAsync(
         return;
     }
 
-    form?.SetArtwork(null);
-    form?.StartActivity("Opening archive...");
+    bool hasCachedAnalysis =
+    TryGetCachedAnalysis(isoPath, out _);
+
+    if (!hasCachedAnalysis)
+    {
+        form?.SetArtwork(null);
+    }
+    if (!hasCachedAnalysis)
+    {
+        form?.StartActivity("Opening archive...");
+    }
 
     try
     {
@@ -592,9 +612,12 @@ static async Task AnalyzeIsoAsync(
             await Task.Run(
                 () => ArchiveImageSource.Open(isoPath));
 
-        form?.UpdateActivity("Analyzing game image...");
+        if (!hasCachedAnalysis)
+        {
+            form?.UpdateActivity("Analyzing game image...");
+        }
 
-        var analyzer = new XboxGameImageAnalyzer();
+            var analyzer = new XboxGameImageAnalyzer();
 
         // Analyze the image off the UI thread.
         var game =
@@ -604,13 +627,21 @@ static async Task AnalyzeIsoAsync(
                     source.ImageName,
                     source.ImageLength));
 
+        CacheAnalysis(isoPath, game);
+
         PrintGameInformation(game);
 
-        form?.UpdateActivity("Looking up game information...");
+        if (!hasCachedAnalysis)
+        {
+            form?.UpdateActivity("Looking up game information...");
+        }
 
         await PrintDatabaseInformationAsync(game, form);
 
-        form?.ScrollOutputToTop();
+        if (!hasCachedAnalysis)
+        {
+            form?.ScrollOutputToTop();
+        }
     }
     catch (Exception ex)
     {
@@ -624,8 +655,57 @@ static async Task AnalyzeIsoAsync(
     }
 }
 
+internal static bool TryGetCachedAnalysis(
+    string sourcePath,
+    out GameImageInfo? game)
+{
+    game = null;
 
-internal static async Task PrintDatabaseInformationAsync(
+    if (_lastAnalyzedGame is null ||
+        string.IsNullOrWhiteSpace(_lastAnalyzedSourcePath))
+    {
+        return false;
+    }
+
+    string fullPath = Path.GetFullPath(sourcePath);
+
+    if (!string.Equals(
+        fullPath,
+        _lastAnalyzedSourcePath,
+        StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    game = _lastAnalyzedGame;
+    return true;
+}
+
+internal static bool TryGetLastAnalyzedSourcePath(
+    out string? sourcePath)
+{
+    sourcePath = null;
+
+    if (_lastAnalyzedGame is null ||
+        string.IsNullOrWhiteSpace(_lastAnalyzedSourcePath) ||
+        !File.Exists(_lastAnalyzedSourcePath))
+    {
+        return false;
+    }
+
+    sourcePath = _lastAnalyzedSourcePath;
+    return true;
+}
+
+    internal static void CacheAnalysis(
+    string sourcePath,
+    GameImageInfo game)
+{
+    _lastAnalyzedSourcePath = Path.GetFullPath(sourcePath);
+    _lastAnalyzedGame = game;
+}
+
+    internal static async Task PrintDatabaseInformationAsync(
     GameImageInfo game,
     MainForm? form = null)
 {

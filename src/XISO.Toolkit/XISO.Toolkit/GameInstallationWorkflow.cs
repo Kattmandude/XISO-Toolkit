@@ -23,20 +23,32 @@ public static class GameInstallationWorkflow
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(form);
 
-        string? selectedSourcePath = OnStaThread(() =>
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select an Xbox game ISO",
-                Filter = "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|Disc images (*.iso;*.xiso)|*.iso;*.xiso|Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*",
-                CheckFileExists = true,
-                Multiselect = false
-            };
+        string? selectedSourcePath;
 
-            return dialog.ShowDialog() == DialogResult.OK
-                ? dialog.FileName
-                : null;
-        });
+        if (!Program.TryGetLastAnalyzedSourcePath(
+            out selectedSourcePath))
+        {
+            // No previously analyzed file is available.
+            selectedSourcePath = OnStaThread(() =>
+            {
+                using var dialog = new OpenFileDialog
+                {
+                    Title = "Select an Xbox game ISO",
+                    Filter = "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|Disc images (*.iso;*.xiso)|*.iso;*.xiso|Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+
+                return dialog.ShowDialog() == DialogResult.OK
+                    ? dialog.FileName
+                    : null;
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(selectedSourcePath))
+        {
+            return;
+        }
 
         if (string.IsNullOrWhiteSpace(selectedSourcePath))
             return;
@@ -51,14 +63,30 @@ public static class GameInstallationWorkflow
 
             while (true)
             {
-                form.SetArtwork(null);
-                form.ClearOutput();
-                form.StartActivity("Opening archive...");
+                if (!Program.TryGetCachedAnalysis(
+                    selectedSourcePath,
+                    out _))
+                {
+                    form.SetArtwork(null);
+                    form.ClearOutput();
+                }
+
+                bool hasCachedAnalysis =
+                    Program.TryGetCachedAnalysis(
+                        selectedSourcePath,
+                        out _);
+
+                if (!hasCachedAnalysis)
+                {
+                    form.StartActivity("Opening archive...");
+                }
 
                 try
                 {
                     archiveSource = await Task.Run(
-                        () => ArchiveImageSource.Open(selectedSourcePath));
+                        () => ArchiveImageSource.Open(
+                            selectedSourcePath,
+                            logDetails: !hasCachedAnalysis));
                 }
                 catch (Exception ex)
                 {
@@ -70,34 +98,58 @@ public static class GameInstallationWorkflow
                 }
                 finally
                 {
-                    form.StopActivity();
+                    if (!hasCachedAnalysis)
+                    {
+                        form.StopActivity();
+                    }
                 }
 
                 ArchiveImageSource currentSource = archiveSource!;
 
+                bool reusedCachedAnalysis = false;
+
                 try
                 {
-                    form.StartActivity("Analyzing game image...");
 
-                    Console.WriteLine($"Analyzing: {currentSource.ImageName}");
+                    if (Program.TryGetCachedAnalysis(
+                        selectedSourcePath,
+                        out var cachedGame))
+                    {
+                        game = cachedGame!;
+                        reusedCachedAnalysis = true;
+                    }
+                    else
+                    {
+                        reusedCachedAnalysis = false;
 
-                    var analyzer = new XboxGameImageAnalyzer();
+                        form.StartActivity("Analyzing game image...");
 
-                    game = await Task.Run(
-                        () => analyzer.Analyze(
-                            currentSource.ImageStream,
-                            currentSource.ImageName,
-                            currentSource.ImageLength));
+                        Console.WriteLine(
+                            $"Analyzing: {currentSource.ImageName}");
 
-                    Program.PrintGameInformation(game);
+                        var analyzer = new XboxGameImageAnalyzer();
 
-                    form.UpdateActivity("Looking up game information...");
+                        game = await Task.Run(
+                            () => analyzer.Analyze(
+                                currentSource.ImageStream,
+                                currentSource.ImageName,
+                                currentSource.ImageLength));
 
-                    await Program.PrintDatabaseInformationAsync(game, form);
+                        Program.CacheAnalysis(selectedSourcePath, game);
+                    }
 
-                    Console.WriteLine();
+                    if (!reusedCachedAnalysis)
+                    {
+                        Program.PrintGameInformation(game);
 
-                    form.ScrollOutputToTop();
+                        form.UpdateActivity("Looking up game information...");
+
+                        await Program.PrintDatabaseInformationAsync(game, form);
+
+                        Console.WriteLine();
+
+                        form.ScrollOutputToTop();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -184,7 +236,10 @@ public static class GameInstallationWorkflow
 
                 string defaultRoot = library?.Path ?? string.Empty;
 
-                await UpdateArtworkAsync(game, form);
+                if (!reusedCachedAnalysis)
+                {
+                    await UpdateArtworkAsync(game, form);
+                }
 
                 string? x360DbRegion = null;
 

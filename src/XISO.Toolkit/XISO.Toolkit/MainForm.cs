@@ -27,6 +27,7 @@ internal sealed class MainForm : Form
     private long _scrollStartTime;
     private int _activityFrame;
     private string _activityMessage = string.Empty;
+    private bool _suppressNextActionScrollToTop;
 
     private static readonly string[] ActivityFrames =
     [
@@ -435,10 +436,23 @@ internal sealed class MainForm : Form
         {
             if (!IsDisposed)
             {
-                ScrollOutputToTop();
+                if (_suppressNextActionScrollToTop)
+                {
+                    _suppressNextActionScrollToTop = false;
+                }
+                else
+                {
+                    ScrollOutputToTop();
+                }
+
                 SetButtonsEnabled(true);
             }
         }
+    }
+
+    internal void SuppressNextActionScrollToTop()
+    {
+        _suppressNextActionScrollToTop = true;
     }
 
     private void SetButtonsEnabled(bool enabled)
@@ -522,6 +536,7 @@ internal sealed class MainForm : Form
         _output.Clear();
     }
 
+
     internal void WriteOutput(string text)
     {
         if (IsDisposed || Disposing)
@@ -544,7 +559,6 @@ internal sealed class MainForm : Form
         _output.SelectionIndent = 0;
         _output.SelectionHangingIndent = 30;
 
-        // Allow normal scrolling while output is being written.
         _output.AppendText(text);
     }
 

@@ -41,7 +41,8 @@ internal sealed class ArchiveImageSource : IDisposable
 
     public static ArchiveImageSource Open(
         string sourcePath,
-        int maxBufferedMB = 16384)
+        int maxBufferedMB = 16384,
+        bool logDetails = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
 
@@ -136,10 +137,13 @@ internal sealed class ArchiveImageSource : IDisposable
                 $"7-Zip did not report a valid size for '{candidate.Name}'.");
         }
 
-        Console.WriteLine($"Archive: {Path.GetFileName(sourcePath)}");
-        Console.WriteLine($"Image entry: {candidate.Name}");
-        Console.WriteLine($"Image size: {candidate.Size:N0} bytes");
-        Console.WriteLine($"Maximum temporary cache: {maxBufferedMB:N0} MB");
+        if (logDetails)
+        {
+            Console.WriteLine($"Archive: {Path.GetFileName(sourcePath)}");
+            Console.WriteLine($"Image entry: {candidate.Name}");
+            Console.WriteLine($"Image size: {candidate.Size:N0} bytes");
+            Console.WriteLine($"Maximum temporary cache: {maxBufferedMB:N0} MB");
+        }
 
         Stream stream = new SevenZipEntryStream(
             sevenZipPath,
@@ -404,8 +408,37 @@ internal sealed class ArchiveImageSource : IDisposable
             }
             catch
             {
-                _cache.Dispose();
-                _process.Dispose();
+                try
+                {
+                    if (_process.HasExited == false)
+                    {
+                        _process.Kill(entireProcessTree: true);
+                        _process.WaitForExit();
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup of a partially started process.
+                }
+
+                try
+                {
+                    _cache.Dispose();
+                }
+                catch
+                {
+                    // Best-effort cleanup of the temporary cache.
+                }
+
+                try
+                {
+                    _process.Dispose();
+                }
+                catch
+                {
+                    // Best-effort cleanup of the process object.
+                }
+
                 TryDeleteCacheFile();
                 throw;
             }
