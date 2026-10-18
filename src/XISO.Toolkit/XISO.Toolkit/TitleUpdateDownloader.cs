@@ -23,18 +23,126 @@ public sealed class TitleUpdateDownloader
         int Failed,
         IReadOnlyList<string> Messages);
 
-    private sealed record UpdateInfo(
+    public sealed record AvailableUpdate(
+        string Version,
         string FileName,
         string DownloadUrl);
 
+    public sealed record UpdateSearchResult(
+        bool Succeeded,
+        IReadOnlyList<AvailableUpdate> Updates,
+        string? Error);
+
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient
+        return new HttpClient
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
+    }
 
-        return client;
+    public async Task<UpdateSearchResult> CheckForUpdatesAsync(
+        string titleId,
+        string mediaId,
+        CancellationToken cancellationToken = default)
+    {
+        titleId = NormalizeId(titleId);
+        mediaId = NormalizeId(mediaId);
+
+        if (!IsHexId(titleId))
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                "The game's Title ID is invalid.");
+        }
+
+        if (!IsHexId(mediaId))
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                "The game's Media ID is invalid.");
+        }
+
+        try
+        {
+            using var timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+
+            string searchUrl =
+                $"{ResourcesUrl}/TitleUpdateInfo.php?titleid=" +
+                Uri.EscapeDataString(titleId);
+
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                searchUrl);
+
+            AddBrowserHeaders(request, includeAjaxHeader: true);
+
+            using var response = await Http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new(
+                    false,
+                    Array.Empty<AvailableUpdate>(),
+                    $"XboxUnity returned HTTP {(int)response.StatusCode}.");
+            }
+
+            await using var stream =
+                await response.Content.ReadAsStreamAsync(timeout.Token);
+
+            using var json = await JsonDocument.ParseAsync(
+                stream,
+                cancellationToken: timeout.Token);
+
+            var updates = ParseUpdates(
+                json.RootElement,
+                titleId,
+                mediaId);
+
+            return new(true, updates, null);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                "The XboxUnity request timed out.");
+        }
+        catch (HttpRequestException ex)
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                $"Could not connect to XboxUnity: {ex.Message}");
+        }
+        catch (JsonException)
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                "XboxUnity returned an invalid JSON response.");
+        }
+        catch (IOException ex)
+        {
+            return new(
+                false,
+                Array.Empty<AvailableUpdate>(),
+                $"Could not read the XboxUnity response: {ex.Message}");
+        }
     }
 
     public async Task<DownloadResult> DownloadAsync(
@@ -42,10 +150,11 @@ public sealed class TitleUpdateDownloader
         string mediaId,
         string destinationFolder,
         IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<AvailableUpdate>? knownUpdates = null)
     {
         var messages = new List<string>();
-        var updates = new List<UpdateInfo>();
+        var updates = new List<AvailableUpdate>();
 
         int downloaded = 0;
         int failed = 0;
@@ -77,79 +186,39 @@ public sealed class TitleUpdateDownloader
             return new(0, 0, 1, messages);
         }
 
-        try
+        if (knownUpdates is not null)
+        {
+            updates.AddRange(knownUpdates);
+            Report($"Using {updates.Count} previously discovered Title Update(s).");
+        }
+        else
         {
             Report($"Searching XboxUnity for Title ID {titleId}...");
 
-            using var searchTimeout =
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken);
+            UpdateSearchResult search;
 
-            searchTimeout.CancelAfter(TimeSpan.FromSeconds(30));
-
-            var searchUrl =
-                $"{ResourcesUrl}/TitleUpdateInfo.php?titleid=" +
-                Uri.EscapeDataString(titleId);
-
-            using var request = new HttpRequestMessage(
-                HttpMethod.Get,
-                searchUrl);
-
-            AddBrowserHeaders(request, includeAjaxHeader: true);
-
-            using var response = await Http.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                searchTimeout.Token);
-
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                Report(
-                    $"XboxUnity search failed: HTTP {(int)response.StatusCode}.");
-
+                search = await CheckForUpdatesAsync(
+                    titleId,
+                    mediaId,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                Report("Title Update search was cancelled.");
                 return new(0, 0, 1, messages);
             }
 
-            await using var responseStream =
-                await response.Content.ReadAsStreamAsync(
-                    searchTimeout.Token);
+            if (!search.Succeeded)
+            {
+                Report(search.Error ?? "Title Update search failed.");
+                return new(0, 0, 1, messages);
+            }
 
-            using var json = await JsonDocument.ParseAsync(
-                responseStream,
-                cancellationToken: searchTimeout.Token);
-
-            updates = ParseUpdates(
-                json.RootElement,
-                titleId,
-                mediaId);
-
+            updates.AddRange(search.Updates);
             Report($"Found {updates.Count} matching Title Update(s).");
-        }
-        catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
-        {
-            Report("Title Update search was cancelled.");
-            return new(updates.Count, 0, 1, messages);
-        }
-        catch (OperationCanceledException)
-        {
-            Report("XboxUnity search timed out.");
-            return new(updates.Count, 0, 1, messages);
-        }
-        catch (HttpRequestException)
-        {
-            Report("Could not connect to XboxUnity to search for updates.");
-            return new(updates.Count, 0, 1, messages);
-        }
-        catch (JsonException)
-        {
-            Report("XboxUnity returned an invalid JSON response.");
-            return new(updates.Count, 0, 1, messages);
-        }
-        catch (IOException)
-        {
-            Report("Could not read the XboxUnity search response.");
-            return new(updates.Count, 0, 1, messages);
         }
 
         if (updates.Count == 0)
@@ -209,11 +278,11 @@ public sealed class TitleUpdateDownloader
                     continue;
                 }
 
-                var actualFileName = GetSafeFileName(
+                string actualFileName = GetSafeFileName(
                     response.Content.Headers.ContentDisposition,
                     update.FileName);
 
-                var destinationPath = Path.Combine(
+                string destinationPath = Path.Combine(
                     destinationFolder,
                     actualFileName);
 
@@ -273,9 +342,7 @@ public sealed class TitleUpdateDownloader
                     or ArgumentException
                     or NotSupportedException)
             {
-                Report(
-                    $"Could not save {update.FileName}: {ex.Message}");
-
+                Report($"Could not save {update.FileName}: {ex.Message}");
                 failed++;
             }
             finally
@@ -288,12 +355,11 @@ public sealed class TitleUpdateDownloader
                     }
                     catch (IOException)
                     {
-                        // A leftover temporary file must not hide
-                        // the original download result.
+                        // Cleanup failure must not hide the download result.
                     }
                     catch (UnauthorizedAccessException)
                     {
-                        // Same handling for cleanup permission errors.
+                        // Cleanup failure must not hide the download result.
                     }
                 }
             }
@@ -306,17 +372,15 @@ public sealed class TitleUpdateDownloader
         return new(updates.Count, downloaded, failed, messages);
     }
 
-    private static List<UpdateInfo> ParseUpdates(
+    private static List<AvailableUpdate> ParseUpdates(
         JsonElement root,
         string titleId,
         string mediaId)
     {
-        var result = new List<UpdateInfo>();
+        var result = new List<AvailableUpdate>();
 
         if (root.ValueKind != JsonValueKind.Object)
-        {
             return result;
-        }
 
         int type = GetInt32(root, "Type");
 
@@ -338,9 +402,7 @@ public sealed class TitleUpdateDownloader
                 }
 
                 if (mediaItem.TryGetProperty("Updates", out var items))
-                {
                     AddUpdates(result, items, titleId);
-                }
             }
         }
         else if (type == 2 &&
@@ -373,23 +435,19 @@ public sealed class TitleUpdateDownloader
     }
 
     private static void AddUpdates(
-        List<UpdateInfo> result,
+        List<AvailableUpdate> result,
         JsonElement items,
         string titleId)
     {
         if (items.ValueKind != JsonValueKind.Array)
-        {
             return;
-        }
 
         foreach (var item in items.EnumerateArray())
-        {
             AddUpdate(result, item, titleId);
-        }
     }
 
     private static void AddUpdate(
-        List<UpdateInfo> result,
+        List<AvailableUpdate> result,
         JsonElement item,
         string titleId)
     {
@@ -406,7 +464,8 @@ public sealed class TitleUpdateDownloader
             $"{ResourcesUrl}/TitleUpdate.php?tuid=" +
             Uri.EscapeDataString(updateId);
 
-        result.Add(new UpdateInfo(
+        result.Add(new AvailableUpdate(
+            version,
             $"{titleId}_{version}.tu",
             url));
     }
@@ -443,19 +502,12 @@ public sealed class TitleUpdateDownloader
         string? fileName = disposition?.FileNameStar;
 
         if (string.IsNullOrWhiteSpace(fileName))
-        {
             fileName = disposition?.FileName;
-        }
 
         if (string.IsNullOrWhiteSpace(fileName))
-        {
             return Path.GetFileName(fallback);
-        }
 
-        fileName = fileName.Trim().Trim('"');
-
-        // Do not allow a server-supplied path to escape the destination.
-        fileName = Path.GetFileName(fileName);
+        fileName = Path.GetFileName(fileName.Trim().Trim('"'));
 
         if (string.IsNullOrWhiteSpace(fileName) ||
             fileName is "." or "..")
@@ -491,9 +543,7 @@ public sealed class TitleUpdateDownloader
         string propertyName)
     {
         if (!element.TryGetProperty(propertyName, out var property))
-        {
             return string.Empty;
-        }
 
         return property.ValueKind switch
         {

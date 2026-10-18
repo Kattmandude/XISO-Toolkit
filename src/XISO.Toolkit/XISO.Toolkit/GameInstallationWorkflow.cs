@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -14,7 +15,6 @@ namespace XISO.Toolkit;
 
 public static class GameInstallationWorkflow
 {
-
     internal static async Task RunAsync(
         ToolkitConfiguration configuration,
         MainForm form)
@@ -27,7 +27,6 @@ public static class GameInstallationWorkflow
         if (!Program.TryGetLastAnalyzedSourcePath(
             out selectedSourcePath))
         {
-            // No previously analyzed file is available.
             selectedSourcePath = OnStaThread(() =>
             {
                 using var dialog = new OpenFileDialog
@@ -42,11 +41,6 @@ public static class GameInstallationWorkflow
                     ? dialog.FileName
                     : null;
             });
-        }
-
-        if (string.IsNullOrWhiteSpace(selectedSourcePath))
-        {
-            return;
         }
 
         if (string.IsNullOrWhiteSpace(selectedSourcePath))
@@ -111,7 +105,7 @@ public static class GameInstallationWorkflow
                         MessageBoxIcon.Error);
                     return;
                 }
-                
+
                 ArchiveImageSource currentSource = archiveSource!;
 
                 bool reusedCachedAnalysis =
@@ -188,8 +182,6 @@ public static class GameInstallationWorkflow
                     }
                 }
 
-                // If the XMID lookup did not find a disc, try the Media ID.
-                // This is particularly useful for Xbox 360 XEX files.
                 if (dboxDisc is null &&
                     !string.IsNullOrWhiteSpace(game.MediaId))
                 {
@@ -217,9 +209,7 @@ public static class GameInstallationWorkflow
                 string defaultRoot = library?.Path ?? string.Empty;
 
                 if (!reusedCachedAnalysis)
-                {
                     await UpdateArtworkAsync(game, form);
-                }
 
                 string? x360DbRegion = null;
 
@@ -250,8 +240,6 @@ public static class GameInstallationWorkflow
                                     StringComparison.OrdinalIgnoreCase))
                             : null;
 
-                        // Prefer the exact disc release. If its Media ID is unavailable,
-                        // use a region only when all listed media agree on that region.
                         x360DbRegion = matchingMedia?.Region;
 
                         if (string.IsNullOrWhiteSpace(x360DbRegion) &&
@@ -265,9 +253,7 @@ public static class GameInstallationWorkflow
                                 .ToArray();
 
                             if (knownRegions.Length == 1)
-                            {
                                 x360DbRegion = knownRegions[0];
-                            }
                         }
                     }
                     catch (Exception ex)
@@ -294,11 +280,12 @@ public static class GameInstallationWorkflow
                         dboxDisc?.RedumpRegion,
                         x360DbRegion,
                         game.Platform,
+                        game.TitleId,
+                        game.MediaId,
                         defaultRoot);
 
                 if (!string.IsNullOrWhiteSpace(result?.SelectedSourcePath))
                 {
-                    // Dispose the previous image before opening the replacement.
                     archiveSource.Dispose();
                     archiveSource = null;
 
@@ -436,15 +423,12 @@ public static class GameInstallationWorkflow
                         cancellationToken));
 
             if (!installationResult.Succeeded)
-            {
-                // Installation failed or was cancelled.
-                // Do not attempt to download Title Updates.
                 return;
-            }
 
             string installedGamePath = installationResult.InstalledPath!;
 
-            // Title Updates are optional and only apply to Xbox 360 games.
+            // Only download Title Updates after successful installation
+            // and only when the user selected the checkbox.
             if (game.Platform == XboxPlatform.Xbox360 &&
                 options.DownloadTitleUpdates)
             {
@@ -465,22 +449,25 @@ public static class GameInstallationWorkflow
                         var downloader = new TitleUpdateDownloader();
 
                         var downloadProgress = new Progress<string>(message =>
-                        {
-                            // Report download progress without changing the
-                            // successful installation result.
-                            System.Diagnostics.Debug.WriteLine(message);
-                        });
+                            System.Diagnostics.Debug.WriteLine(message));
 
                         var downloadResult = await downloader.DownloadAsync(
                             game.TitleId,
                             game.MediaId,
                             titleUpdatePath,
-                            downloadProgress);
+                            downloadProgress,
+                            knownUpdates: options.AvailableTitleUpdates);
 
                         string summary =
                             $"Title Updates found: {downloadResult.Found}\r\n" +
                             $"Downloaded: {downloadResult.Downloaded}\r\n" +
                             $"Failed: {downloadResult.Failed}";
+
+                        if (downloadResult.Messages.Count > 0)
+                        {
+                            summary += "\r\n\r\nDetails:\r\n" +
+                                string.Join("\r\n", downloadResult.Messages);
+                        }
 
                         MessageBox.Show(
                             summary,
@@ -493,7 +480,6 @@ public static class GameInstallationWorkflow
                 }
                 catch (Exception ex)
                 {
-                    // A Title Update problem must not undo a successful installation.
                     MessageBox.Show(
                         "The game was installed successfully, but the Title Update download encountered an error.\r\n\r\n" +
                         ex.Message,
@@ -510,61 +496,45 @@ public static class GameInstallationWorkflow
     }
 
     private static async Task UpdateArtworkAsync(
-    GameImageInfo game,
-    MainForm form)
+        GameImageInfo game,
+        MainForm form)
     {
         if (game.Platform != XboxPlatform.Xbox360)
-        {
             return;
-        }
 
         try
         {
             var client = new X360DbClient();
 
-            bool databaseAvailable =
-                await client.EnsureDatabaseAsync();
+            bool databaseAvailable = await client.EnsureDatabaseAsync();
 
             if (!databaseAvailable)
             {
                 Console.WriteLine(
                     "Artwork unavailable: Xbox 360 database is unavailable.");
-
                 return;
             }
 
             var x360Game =
-                await client.GetGameAsync(
-                    game.TitleId,
-                    game.MediaId);
+                await client.GetGameAsync(game.TitleId, game.MediaId);
 
             var x360Details =
-                await client.GetDetailsAsync(
-                    game.TitleId);
+                await client.GetDetailsAsync(game.TitleId);
 
             string? boxArtUrl =
-                x360Details?.Artwork?.BoxArt
-                ?? x360Game?.BoxArt;
+                x360Details?.Artwork?.BoxArt ?? x360Game?.BoxArt;
 
             string? artworkPath =
-                await client.DownloadBoxArtAsync(
-                    game.TitleId,
-                    boxArtUrl);
+                await client.DownloadBoxArtAsync(game.TitleId, boxArtUrl);
 
             if (!string.IsNullOrWhiteSpace(artworkPath))
-            {
                 form.SetArtwork(artworkPath);
-            }
             else
-            {
-                Console.WriteLine(
-                    "No Xbox 360 artwork was available for this game.");
-            }
+                Console.WriteLine("No Xbox 360 artwork was available for this game.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine(
-                $"Could not load game artwork: {ex.Message}");
+            Console.WriteLine($"Could not load game artwork: {ex.Message}");
         }
     }
 
@@ -575,6 +545,8 @@ public static class GameInstallationWorkflow
         string? releaseCountry,
         string? x360DbRegion,
         XboxPlatform platform,
+        string titleId,
+        string mediaId,
         string defaultRoot)
     {
         var completion = new TaskCompletionSource<InstallOptionsResult?>(
@@ -598,17 +570,19 @@ public static class GameInstallationWorkflow
                 ? originalImageName[^9..]
                 : Path.GetExtension(originalImageName);
 
-        using var form = new Form
+        bool isOriginalXbox = platform == XboxPlatform.OriginalXbox;
+        bool isXbox360 = platform == XboxPlatform.Xbox360;
+
+        var form = new Form
         {
             Text = "Install Game",
             Width = 700,
-            Height = 730,
+            Height = 865,
             StartPosition = FormStartPosition.CenterScreen,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false
         };
-
 
         var namingGroup = new GroupBox
         {
@@ -632,9 +606,6 @@ public static class GameInstallationWorkflow
             string.IsNullOrWhiteSpace(x360DbRegion)
                 ? null
                 : x360DbRegion.Trim();
-
-        bool isOriginalXbox = platform == XboxPlatform.OriginalXbox;
-        bool isXbox360 = platform == XboxPlatform.Xbox360;
 
         var regionRadio = new RadioButton
         {
@@ -879,36 +850,23 @@ public static class GameInstallationWorkflow
             Checked = false
         };
 
-        string lastGeneratedImageName = originalImageName;
-        string? lastAppliedImageSuffix = null;
-
-
         void RefreshImageNameSuffix()
         {
             if (!applySuffixToImageCheckBox.Checked)
             {
-                lastAppliedImageSuffix = null;
-                lastGeneratedImageName = originalImageName;
                 imageNameBox.Text = originalImageName;
                 return;
             }
 
-            // Use the exact same title and suffix logic as the game folder name.
             string gameName = MakeAutomaticName();
 
-            // Preserve the original image extension, including compound extensions
-            // such as .xiso.iso.
             string extension = originalImageName.EndsWith(
                     ".xiso.iso",
                     StringComparison.OrdinalIgnoreCase)
                 ? originalImageName[^9..]
                 : Path.GetExtension(originalImageName);
 
-            string generatedFileName = gameName + extension;
-
-            lastAppliedImageSuffix = GetSelectedSuffix();
-            lastGeneratedImageName = generatedFileName;
-            imageNameBox.Text = generatedFileName;
+            imageNameBox.Text = gameName + extension;
         }
 
         void RefreshFolderName()
@@ -916,8 +874,6 @@ public static class GameInstallationWorkflow
             bool extractFiles = extractRadio.Checked;
             bool createFolder = gameFolderRadio.Checked;
 
-            // Extraction always needs a folder. For image mode,
-            // the folder name is irrelevant when copying to the root.
             folderNameLabel.Enabled =
                 extractFiles || (keepImageRadio.Checked && createFolder);
 
@@ -930,7 +886,6 @@ public static class GameInstallationWorkflow
             bool keepImage = keepImageRadio.Checked;
 
             imageLayoutGroup.Enabled = keepImage;
-
             imageNameLabel.Enabled = keepImage;
             imageNameBox.Enabled = keepImage;
             applySuffixToImageCheckBox.Enabled = keepImage;
@@ -941,11 +896,11 @@ public static class GameInstallationWorkflow
         void RefreshNamingOptions()
         {
             countryFormatGroup.Enabled =
-            !noSuffixRadio.Checked &&
-            (regionRadio.Checked ||
-             countryRadio.Checked ||
-             dboxRegionRadio.Checked ||
-             x360DbRegionRadio.Checked);
+                !noSuffixRadio.Checked &&
+                (regionRadio.Checked ||
+                 countryRadio.Checked ||
+                 dboxRegionRadio.Checked ||
+                 x360DbRegionRadio.Checked);
 
             nameBox.Text = MakeAutomaticName();
 
@@ -975,8 +930,8 @@ public static class GameInstallationWorkflow
         {
             if (dboxRegionRadio.Checked)
                 RefreshNamingOptions();
-        }; 
-        
+        };
+
         x360DbRegionRadio.CheckedChanged += (_, _) =>
         {
             if (x360DbRegionRadio.Checked)
@@ -996,37 +951,13 @@ public static class GameInstallationWorkflow
         };
 
         applySuffixToImageCheckBox.CheckedChanged += (_, _) =>
-        {
-            if (applySuffixToImageCheckBox.Checked)
-            {
-                // Start with the original image name when enabling
-                // suffix application for the first time.
-                imageNameBox.Text = originalImageName;
-            }
-
             RefreshImageNameSuffix();
-        };
 
-        imageNameBox.TextChanged += (_, _) =>
-        {
-            // If the user edits the image filename manually while
-            // suffix application is disabled, leave it independent.
-            if (!applySuffixToImageCheckBox.Checked)
-                lastGeneratedImageName = imageNameBox.Text;
-        };
+        extractRadio.CheckedChanged += (_, _) => RefreshImageOptions();
+        keepImageRadio.CheckedChanged += (_, _) => RefreshImageOptions();
+        libraryRootRadio.CheckedChanged += (_, _) => RefreshFolderName();
+        gameFolderRadio.CheckedChanged += (_, _) => RefreshFolderName();
 
-        extractRadio.CheckedChanged += (_, _) =>
-            RefreshImageOptions();
-
-        keepImageRadio.CheckedChanged += (_, _) =>
-            RefreshImageOptions();
-
-        libraryRootRadio.CheckedChanged += (_, _) =>
-            RefreshFolderName();
-
-        gameFolderRadio.CheckedChanged += (_, _) =>
-            RefreshFolderName();
-        
         RefreshNamingOptions();
         RefreshImageOptions();
 
@@ -1070,13 +1001,62 @@ public static class GameInstallationWorkflow
                 rootBox.Text = folderDialog.SelectedPath;
         };
 
+        // Title Update lookup UI. The list is populated asynchronously
+        // after the dialog opens, without downloading any update files.
+        var titleUpdateGroup = new GroupBox
+        {
+            Text = "Available Xbox 360 Title Updates",
+            Left = 15,
+            Top = 535,
+            Width = 650,
+            Height = 125,
+            Visible = isXbox360
+        };
+
+        var titleUpdateStatusLabel = new Label
+        {
+            Text = "Checking XboxUnity for available updates...",
+            Left = 12,
+            Top = 22,
+            Width = 510,
+            Height = 22,
+            AutoEllipsis = true
+        };
+
+        var titleUpdateRetryButton = new Button
+        {
+            Text = "Retry",
+            Left = 535,
+            Top = 18,
+            Width = 95,
+            Height = 27,
+            Visible = false
+        };
+
+        var titleUpdateListBox = new ListBox
+        {
+            Left = 12,
+            Top = 48,
+            Width = 618,
+            Height = 65,
+            IntegralHeight = false
+        };
+
+        titleUpdateGroup.Controls.AddRange(
+        [
+            titleUpdateStatusLabel,
+            titleUpdateRetryButton,
+            titleUpdateListBox
+        ]);
+
         var titleUpdateCheckBox = new CheckBox
         {
-            Text = "Download Title Updates after installation",
+            Text = "Install available Title Updates after installation",
             Left = 15,
-            Top = 540,
-            Width = 400,
+            Top = 665,
+            Width = 500,
             Checked = false,
+            Enabled = false,
             Visible = isXbox360
         };
 
@@ -1084,7 +1064,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Title Update destination:",
             Left = 15,
-            Top = 568,
+            Top = 693,
             Width = 250,
             Visible = isXbox360
         };
@@ -1092,7 +1072,7 @@ public static class GameInstallationWorkflow
         var titleUpdatePathBox = new TextBox
         {
             Left = 15,
-            Top = 591,
+            Top = 716,
             Width = 535,
             Visible = isXbox360,
             Enabled = false
@@ -1104,7 +1084,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Browse...",
             Left = 560,
-            Top = 589,
+            Top = 714,
             Width = 105,
             Visible = isXbox360,
             Enabled = false
@@ -1112,11 +1092,8 @@ public static class GameInstallationWorkflow
 
         titleUpdateCheckBox.CheckedChanged += (_, _) =>
         {
-            titleUpdatePathBox.Enabled =
-                titleUpdateCheckBox.Checked;
-
-            titleUpdateBrowseButton.Enabled =
-                titleUpdateCheckBox.Checked;
+            titleUpdatePathBox.Enabled = titleUpdateCheckBox.Checked;
+            titleUpdateBrowseButton.Enabled = titleUpdateCheckBox.Checked;
         };
 
         titleUpdateBrowseButton.Click += (_, _) =>
@@ -1165,7 +1142,6 @@ public static class GameInstallationWorkflow
 
         nameBox.TextChanged += (_, _) => RefreshTitleUpdatePath();
         rootBox.TextChanged += (_, _) => RefreshTitleUpdatePath();
-
         extractRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
         keepImageRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
         libraryRootRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
@@ -1173,11 +1149,118 @@ public static class GameInstallationWorkflow
 
         RefreshTitleUpdatePath();
 
+        IReadOnlyList<TitleUpdateDownloader.AvailableUpdate>
+            availableTitleUpdates =
+                Array.Empty<TitleUpdateDownloader.AvailableUpdate>();
+
+        using var lookupCancellation = new CancellationTokenSource();
+
+        async Task RefreshAvailableTitleUpdatesAsync()
+        {
+            if (!isXbox360 || form.IsDisposed)
+                return;
+
+            titleUpdateRetryButton.Visible = false;
+            titleUpdateListBox.Items.Clear();
+            titleUpdateCheckBox.Enabled = false;
+            titleUpdateCheckBox.Checked = false;
+
+            titleUpdateStatusLabel.Text =
+                "Checking XboxUnity for available updates...";
+
+            if (string.IsNullOrWhiteSpace(titleId) ||
+                string.IsNullOrWhiteSpace(mediaId))
+            {
+                titleUpdateStatusLabel.Text =
+                    "Title ID or Media ID is missing.";
+
+                return;
+            }
+
+            try
+            {
+                var downloader = new TitleUpdateDownloader();
+
+                var search = await downloader.CheckForUpdatesAsync(
+                    titleId,
+                    mediaId,
+                    lookupCancellation.Token);
+
+                if (form.IsDisposed)
+                    return;
+
+                if (!search.Succeeded)
+                {
+                    availableTitleUpdates =
+                        Array.Empty<TitleUpdateDownloader.AvailableUpdate>();
+
+                    titleUpdateStatusLabel.Text =
+                        search.Error ?? "Could not check for updates.";
+
+                    titleUpdateRetryButton.Visible = true;
+                    return;
+                }
+
+                availableTitleUpdates = search.Updates;
+
+                if (availableTitleUpdates.Count == 0)
+                {
+                    titleUpdateStatusLabel.Text =
+                        "No matching Title Updates were found.";
+
+                    return;
+                }
+
+                titleUpdateStatusLabel.Text =
+                    $"Found {availableTitleUpdates.Count} matching update(s).";
+
+                foreach (var update in availableTitleUpdates)
+                {
+                    titleUpdateListBox.Items.Add(
+                        $"Version {update.Version} — {update.FileName}");
+                }
+
+                titleUpdateCheckBox.Enabled = true;
+            }
+            catch (OperationCanceledException)
+            {
+                // The dialog is closing.
+            }
+            catch (Exception ex)
+            {
+                if (form.IsDisposed)
+                    return;
+
+                availableTitleUpdates =
+                    Array.Empty<TitleUpdateDownloader.AvailableUpdate>();
+
+                titleUpdateStatusLabel.Text =
+                    $"Unable to check for updates: {ex.Message}";
+
+                titleUpdateRetryButton.Visible = true;
+            }
+        }
+
+        titleUpdateRetryButton.Click += async (_, _) =>
+        {
+            titleUpdateRetryButton.Enabled = false;
+
+            try
+            {
+                await RefreshAvailableTitleUpdatesAsync();
+            }
+            finally
+            {
+                if (!form.IsDisposed)
+                    titleUpdateRetryButton.Enabled = true;
+            }
+        };
+
         var installButton = new Button
         {
             Text = "Install",
             Left = 450,
-            Top = 655,
+            Top = 775,
             Width = 100,
             DialogResult = DialogResult.None
         };
@@ -1186,7 +1269,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Cancel",
             Left = 560,
-            Top = 655,
+            Top = 775,
             Width = 105,
             DialogResult = DialogResult.None
         };
@@ -1195,7 +1278,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Select Different File...",
             Left = 15,
-            Top = 655,
+            Top = 775,
             Width = 180,
             DialogResult = DialogResult.None
         };
@@ -1214,9 +1297,7 @@ public static class GameInstallationWorkflow
                 return;
 
             completion.TrySetResult(
-                new InstallOptionsResult(
-                    null,
-                    dialog.FileName));
+                new InstallOptionsResult(null, dialog.FileName));
 
             form.Close();
         };
@@ -1234,6 +1315,7 @@ public static class GameInstallationWorkflow
             rootLabel,
             rootBox,
             browseButton,
+            titleUpdateGroup,
             titleUpdateCheckBox,
             titleUpdatePathLabel,
             titleUpdatePathBox,
@@ -1277,7 +1359,8 @@ public static class GameInstallationWorkflow
                         selectedImageName,
                         gameFolderRadio.Checked,
                         titleUpdateCheckBox.Checked,
-                        titleUpdatePathBox.Text.Trim()),
+                        titleUpdatePathBox.Text.Trim(),
+                        availableTitleUpdates),
                     null));
 
             form.Close();
@@ -1291,12 +1374,26 @@ public static class GameInstallationWorkflow
 
         form.FormClosed += (_, _) =>
         {
+            lookupCancellation.Cancel();
             completion.TrySetResult(null);
         };
 
-        form.Show();
+        form.Shown += async (_, _) =>
+        {
+            await RefreshAvailableTitleUpdatesAsync();
+        };
 
-        return await completion.Task;
+        try
+        {
+            form.Show();
+
+            return await completion.Task;
+        }
+        finally
+        {
+            lookupCancellation.Cancel();
+            form.Dispose();
+        }
     }
 
     private static void ValidateImageFileName(string fileName)
@@ -1401,7 +1498,7 @@ public static class GameInstallationWorkflow
         string cleaned = country.Trim();
 
         var aliases =
-            new System.Collections.Generic.Dictionary<string, string>(
+            new Dictionary<string, string>(
                 StringComparer.OrdinalIgnoreCase)
             {
                 ["USA"] = "US",
@@ -1451,7 +1548,9 @@ public static class GameInstallationWorkflow
         string ImageFileName,
         bool CreateGameFolderForImage,
         bool DownloadTitleUpdates,
-        string TitleUpdatePath);
+        string TitleUpdatePath,
+        IReadOnlyList<TitleUpdateDownloader.AvailableUpdate>
+            AvailableTitleUpdates);
 
     private sealed record InstallOptionsResult(
         InstallOptions? Options,
