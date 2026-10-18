@@ -1,4 +1,3 @@
-
 using System;
 using System.IO;
 using System.Linq;
@@ -63,14 +62,6 @@ public static class GameInstallationWorkflow
 
             while (true)
             {
-                if (!Program.TryGetCachedAnalysis(
-                    selectedSourcePath,
-                    out _))
-                {
-                    form.SetArtwork(null);
-                    form.ClearOutput();
-                }
-
                 bool hasCachedAnalysis =
                     Program.TryGetCachedAnalysis(
                         selectedSourcePath,
@@ -78,7 +69,28 @@ public static class GameInstallationWorkflow
 
                 if (!hasCachedAnalysis)
                 {
-                    form.StartActivity("Opening archive...");
+                    form.SetArtwork(null);
+                    form.ClearOutput();
+                }
+
+                string extension = Path.GetExtension(selectedSourcePath);
+
+                bool isArchive =
+                    extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".rar", StringComparison.OrdinalIgnoreCase);
+
+                IProgress<string>? archiveProgress = null;
+
+                if (!hasCachedAnalysis)
+                {
+                    form.StartActivity(
+                        isArchive
+                            ? "Opening archive..."
+                            : "Opening disc image...");
+
+                    archiveProgress = new Progress<string>(
+                        message => form.UpdateActivity(message));
                 }
 
                 try
@@ -86,70 +98,38 @@ public static class GameInstallationWorkflow
                     archiveSource = await Task.Run(
                         () => ArchiveImageSource.Open(
                             selectedSourcePath,
-                            logDetails: !hasCachedAnalysis));
+                            logDetails: !hasCachedAnalysis,
+                            progress: archiveProgress));
                 }
                 catch (Exception ex)
                 {
+                    form.StopActivity();
+
                     ShowMessage(
                         $"The selected file could not be opened as an Xbox image or supported archive.\n\n{ex.Message}",
                         "Installation",
                         MessageBoxIcon.Error);
                     return;
                 }
-                finally
-                {
-                    if (!hasCachedAnalysis)
-                    {
-                        form.StopActivity();
-                    }
-                }
-
+                
                 ArchiveImageSource currentSource = archiveSource!;
 
-                bool reusedCachedAnalysis = false;
+                bool reusedCachedAnalysis =
+                    Program.TryGetCachedAnalysis(
+                        selectedSourcePath,
+                        out _);
 
                 try
                 {
-
-                    if (Program.TryGetCachedAnalysis(
-                        selectedSourcePath,
-                        out var cachedGame))
-                    {
-                        game = cachedGame!;
-                        reusedCachedAnalysis = true;
-                    }
-                    else
-                    {
-                        reusedCachedAnalysis = false;
-
-                        form.StartActivity("Analyzing game image...");
-
-                        Console.WriteLine(
-                            $"Analyzing: {currentSource.ImageName}");
-
-                        var analyzer = new XboxGameImageAnalyzer();
-
-                        game = await Task.Run(
-                            () => analyzer.Analyze(
-                                currentSource.ImageStream,
-                                currentSource.ImageName,
-                                currentSource.ImageLength));
-
-                        Program.CacheAnalysis(selectedSourcePath, game);
-                    }
-
-                    if (!reusedCachedAnalysis)
-                    {
-                        Program.PrintGameInformation(game);
-
-                        form.UpdateActivity("Looking up game information...");
-
-                        await Program.PrintDatabaseInformationAsync(game, form);
-
-                        Console.WriteLine();
-
-                        form.ScrollOutputToTop();
-                    }
+                    game = await Program.AnalyzeOpenedSourceAsync(
+                        currentSource,
+                        form,
+                        reusedCachedAnalysis,
+                        printInformation: !reusedCachedAnalysis,
+                        analysisStatusMessage:
+                            currentSource.IsArchive
+                                ? "Analyzing image; decompressing and caching data as needed..."
+                                : "Analyzing game image...");
                 }
                 catch (Exception ex)
                 {
@@ -253,15 +233,42 @@ public static class GameInstallationWorkflow
                         var x360Details = await x360DbClient.GetDetailsAsync(
                             game.TitleId);
 
-                        var matchingMedia = x360Details?.Media?.FirstOrDefault(
-                            media =>
-                                !string.IsNullOrWhiteSpace(game.MediaId) &&
-                                string.Equals(
-                                    media.MediaId,
-                                    game.MediaId,
-                                    StringComparison.OrdinalIgnoreCase));
+                        var mediaEntries = x360Details?.Media;
 
+                        bool hasUsableMediaId =
+                            !string.IsNullOrWhiteSpace(game.MediaId) &&
+                            !string.Equals(
+                                game.MediaId.Trim(),
+                                "00000000",
+                                StringComparison.OrdinalIgnoreCase);
+
+                        var matchingMedia = hasUsableMediaId
+                            ? mediaEntries?.FirstOrDefault(media =>
+                                string.Equals(
+                                    media.MediaId?.Trim(),
+                                    game.MediaId.Trim(),
+                                    StringComparison.OrdinalIgnoreCase))
+                            : null;
+
+                        // Prefer the exact disc release. If its Media ID is unavailable,
+                        // use a region only when all listed media agree on that region.
                         x360DbRegion = matchingMedia?.Region;
+
+                        if (string.IsNullOrWhiteSpace(x360DbRegion) &&
+                            mediaEntries is { Count: > 0 })
+                        {
+                            string[] knownRegions = mediaEntries
+                                .Select(media => media.Region?.Trim())
+                                .Where(region => !string.IsNullOrWhiteSpace(region))
+                                .Select(region => region!)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .ToArray();
+
+                            if (knownRegions.Length == 1)
+                            {
+                                x360DbRegion = knownRegions[0];
+                            }
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -269,6 +276,15 @@ public static class GameInstallationWorkflow
                             $"X360DB region lookup unavailable: {ex.Message}");
                     }
                 }
+
+                System.Diagnostics.Debug.WriteLine("===== INSTALL DIAGNOSTIC =====");
+                System.Diagnostics.Debug.WriteLine($"Platform: {game.Platform}");
+                System.Diagnostics.Debug.WriteLine($"Title ID: {game.TitleId}");
+                System.Diagnostics.Debug.WriteLine($"Media ID: {game.MediaId}");
+                System.Diagnostics.Debug.WriteLine($"DBox disc found: {dboxDisc is not null}");
+                System.Diagnostics.Debug.WriteLine($"DBox Redump region: {dboxDisc?.RedumpRegion ?? "<null>"}");
+                System.Diagnostics.Debug.WriteLine($"X360DB region: {x360DbRegion ?? "<null>"}");
+                System.Diagnostics.Debug.WriteLine("===== END INSTALL DIAGNOSTIC =====");
 
                 InstallOptionsResult? result =
                     await ShowInstallOptionsAsync(
@@ -406,7 +422,7 @@ public static class GameInstallationWorkflow
                 CreateGameFolderForImage = createGameFolder
             };
 
-            InstallationProgressDialog.Show(
+            var installationResult = InstallationProgressDialog.Show(
                 title,
                 $"{methodDescription} ({game.Platform})",
                 selectedSourcePath,
@@ -418,6 +434,74 @@ public static class GameInstallationWorkflow
                         request,
                         progress,
                         cancellationToken));
+
+            if (!installationResult.Succeeded)
+            {
+                // Installation failed or was cancelled.
+                // Do not attempt to download Title Updates.
+                return;
+            }
+
+            string installedGamePath = installationResult.InstalledPath!;
+
+            // Title Updates are optional and only apply to Xbox 360 games.
+            if (game.Platform == XboxPlatform.Xbox360 &&
+                options.DownloadTitleUpdates)
+            {
+                try
+                {
+                    string titleUpdatePath = options.TitleUpdatePath.Trim();
+
+                    if (string.IsNullOrWhiteSpace(titleUpdatePath))
+                    {
+                        MessageBox.Show(
+                            "The game was installed successfully, but no Title Update destination was selected.",
+                            "Title Update Download",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                    else
+                    {
+                        var downloader = new TitleUpdateDownloader();
+
+                        var downloadProgress = new Progress<string>(message =>
+                        {
+                            // Report download progress without changing the
+                            // successful installation result.
+                            System.Diagnostics.Debug.WriteLine(message);
+                        });
+
+                        var downloadResult = await downloader.DownloadAsync(
+                            game.TitleId,
+                            game.MediaId,
+                            titleUpdatePath,
+                            downloadProgress);
+
+                        string summary =
+                            $"Title Updates found: {downloadResult.Found}\r\n" +
+                            $"Downloaded: {downloadResult.Downloaded}\r\n" +
+                            $"Failed: {downloadResult.Failed}";
+
+                        MessageBox.Show(
+                            summary,
+                            "Title Update Download",
+                            MessageBoxButtons.OK,
+                            downloadResult.Failed > 0
+                                ? MessageBoxIcon.Warning
+                                : MessageBoxIcon.Information);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A Title Update problem must not undo a successful installation.
+                    MessageBox.Show(
+                        "The game was installed successfully, but the Title Update download encountered an error.\r\n\r\n" +
+                        ex.Message,
+                        "Title Update Download",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+            }
         }
         finally
         {
@@ -518,7 +602,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Install Game",
             Width = 700,
-            Height = 700,
+            Height = 730,
             StartPosition = FormStartPosition.CenterScreen,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -640,14 +724,6 @@ public static class GameInstallationWorkflow
             regionRadio,
             dboxRegionRadio,
             x360DbRegionRadio,
-            countryFormatGroup
-        ]);
-
-        namingGroup.Controls.AddRange(
-        [
-            noSuffixRadio,
-            regionRadio,
-            countryRadio,
             countryFormatGroup
         ]);
 
@@ -950,7 +1026,7 @@ public static class GameInstallationWorkflow
 
         gameFolderRadio.CheckedChanged += (_, _) =>
             RefreshFolderName();
-
+        
         RefreshNamingOptions();
         RefreshImageOptions();
 
@@ -994,11 +1070,114 @@ public static class GameInstallationWorkflow
                 rootBox.Text = folderDialog.SelectedPath;
         };
 
+        var titleUpdateCheckBox = new CheckBox
+        {
+            Text = "Download Title Updates after installation",
+            Left = 15,
+            Top = 540,
+            Width = 400,
+            Checked = false,
+            Visible = isXbox360
+        };
+
+        var titleUpdatePathLabel = new Label
+        {
+            Text = "Title Update destination:",
+            Left = 15,
+            Top = 568,
+            Width = 250,
+            Visible = isXbox360
+        };
+
+        var titleUpdatePathBox = new TextBox
+        {
+            Left = 15,
+            Top = 591,
+            Width = 535,
+            Visible = isXbox360,
+            Enabled = false
+        };
+
+        bool titleUpdatePathManuallyEdited = false;
+
+        var titleUpdateBrowseButton = new Button
+        {
+            Text = "Browse...",
+            Left = 560,
+            Top = 589,
+            Width = 105,
+            Visible = isXbox360,
+            Enabled = false
+        };
+
+        titleUpdateCheckBox.CheckedChanged += (_, _) =>
+        {
+            titleUpdatePathBox.Enabled =
+                titleUpdateCheckBox.Checked;
+
+            titleUpdateBrowseButton.Enabled =
+                titleUpdateCheckBox.Checked;
+        };
+
+        titleUpdateBrowseButton.Click += (_, _) =>
+        {
+            using var folderDialog = new FolderBrowserDialog
+            {
+                Description = "Choose the Title Update destination",
+                UseDescriptionForTitle = true,
+                ShowNewFolderButton = true
+            };
+
+            if (Directory.Exists(titleUpdatePathBox.Text))
+                folderDialog.SelectedPath = titleUpdatePathBox.Text;
+
+            if (folderDialog.ShowDialog(form) == DialogResult.OK)
+            {
+                titleUpdatePathBox.Text = folderDialog.SelectedPath;
+                titleUpdatePathManuallyEdited = true;
+            }
+        };
+
+        void RefreshTitleUpdatePath()
+        {
+            if (titleUpdatePathManuallyEdited)
+                return;
+
+            string selectedRoot = rootBox.Text.Trim();
+            string selectedName = SanitizeFolderName(nameBox.Text.Trim());
+
+            bool createFolder =
+                extractRadio.Checked || gameFolderRadio.Checked;
+
+            string gameDestination = createFolder
+                ? Path.Combine(selectedRoot, selectedName)
+                : selectedRoot;
+
+            titleUpdatePathBox.Text =
+                Path.Combine(gameDestination, "TitleUpdate");
+        }
+
+        titleUpdatePathBox.TextChanged += (_, _) =>
+        {
+            if (titleUpdatePathBox.Focused)
+                titleUpdatePathManuallyEdited = true;
+        };
+
+        nameBox.TextChanged += (_, _) => RefreshTitleUpdatePath();
+        rootBox.TextChanged += (_, _) => RefreshTitleUpdatePath();
+
+        extractRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
+        keepImageRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
+        libraryRootRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
+        gameFolderRadio.CheckedChanged += (_, _) => RefreshTitleUpdatePath();
+
+        RefreshTitleUpdatePath();
+
         var installButton = new Button
         {
             Text = "Install",
             Left = 450,
-            Top = 565,
+            Top = 655,
             Width = 100,
             DialogResult = DialogResult.None
         };
@@ -1007,7 +1186,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Cancel",
             Left = 560,
-            Top = 565,
+            Top = 655,
             Width = 105,
             DialogResult = DialogResult.None
         };
@@ -1016,7 +1195,7 @@ public static class GameInstallationWorkflow
         {
             Text = "Select Different File...",
             Left = 15,
-            Top = 565,
+            Top = 655,
             Width = 180,
             DialogResult = DialogResult.None
         };
@@ -1055,6 +1234,10 @@ public static class GameInstallationWorkflow
             rootLabel,
             rootBox,
             browseButton,
+            titleUpdateCheckBox,
+            titleUpdatePathLabel,
+            titleUpdatePathBox,
+            titleUpdateBrowseButton,
             selectDifferentFileButton,
             installButton,
             cancelButton
@@ -1092,7 +1275,9 @@ public static class GameInstallationWorkflow
                         selectedRoot,
                         method,
                         selectedImageName,
-                        gameFolderRadio.Checked),
+                        gameFolderRadio.Checked,
+                        titleUpdateCheckBox.Checked,
+                        titleUpdatePathBox.Text.Trim()),
                     null));
 
             form.Close();
@@ -1264,7 +1449,9 @@ public static class GameInstallationWorkflow
         string Root,
         InstallationMethod Method,
         string ImageFileName,
-        bool CreateGameFolderForImage);
+        bool CreateGameFolderForImage,
+        bool DownloadTitleUpdates,
+        string TitleUpdatePath);
 
     private sealed record InstallOptionsResult(
         InstallOptions? Options,

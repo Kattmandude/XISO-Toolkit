@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\XISO.Core\XISO.Core\XISO.Core.csproj" />
@@ -14,6 +14,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="**/*.bak*" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Update="Data\XISO-OriginalXbox-Releases.db">

@@ -8,8 +8,7 @@ using System.Windows.Forms;
 
 internal static class Program
 {
-    private static string? _lastAnalyzedSourcePath;
-    private static GameImageInfo? _lastAnalyzedGame;
+    private static readonly GameAnalysisService AnalysisService = new();
 
     [STAThread]
     private static void Main(string[] args)
@@ -578,134 +577,136 @@ internal static void PrintGameInformation(GameImageInfo game)
             }
         }
     }
-}
+    }
+
+internal static async Task<GameImageInfo> AnalyzeOpenedSourceAsync(
+    ArchiveImageSource source,
+    MainForm? form,
+    bool hasCachedAnalysis,
+    bool printInformation,
+    string analysisStatusMessage = "Analyzing game image...")
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (!hasCachedAnalysis)
+        {
+            form?.UpdateActivity(analysisStatusMessage);
+        }
+
+        GameImageInfo game = await Task.Run(
+            () => AnalysisService.Analyze(
+                source,
+                out _));
+
+        if (printInformation)
+        {
+            PrintGameInformation(game);
+
+            if (!hasCachedAnalysis)
+            {
+                form?.UpdateActivity(
+                    "Looking up game information...");
+            }
+
+            await PrintDatabaseInformationAsync(game, form);
+
+            if (!hasCachedAnalysis)
+            {
+                form?.ScrollOutputToTop();
+            }
+        }
+
+        return game;
+    }
 
 static async Task AnalyzeIsoAsync(
     string isoPath,
     MainForm? form = null)
-{
-    isoPath = isoPath.Trim().Trim('"');
-
-    if (!File.Exists(isoPath))
     {
-        Console.WriteLine("ISO file not found:");
-        Console.WriteLine(isoPath);
-        return;
-    }
+        isoPath = isoPath.Trim().Trim('"');
 
-    bool hasCachedAnalysis =
-    TryGetCachedAnalysis(isoPath, out _);
+        if (!File.Exists(isoPath))
+        {
+            Console.WriteLine("ISO file not found:");
+            Console.WriteLine(isoPath);
+            return;
+        }
 
-    if (!hasCachedAnalysis)
-    {
-        form?.SetArtwork(null);
-    }
-    if (!hasCachedAnalysis)
-    {
-        form?.StartActivity("Opening archive...");
-    }
-
-    try
-    {
-        // Open the archive off the UI thread.
-        using var source =
-            await Task.Run(
-                () => ArchiveImageSource.Open(isoPath));
+        bool hasCachedAnalysis =
+            TryGetCachedAnalysis(isoPath, out _);
 
         if (!hasCachedAnalysis)
         {
-            form?.UpdateActivity("Analyzing game image...");
+            form?.SetArtwork(null);
+            form?.StartActivity("Opening archive...");
         }
 
-            var analyzer = new XboxGameImageAnalyzer();
+        IProgress<string>? progress =
+            form != null
+                ? new Progress<string>(
+                    message => form.UpdateActivity(message))
+                : null;
 
-        // Analyze the image off the UI thread.
-        var game =
-            await Task.Run(
-                () => analyzer.Analyze(
-                    source.ImageStream,
-                    source.ImageName,
-                    source.ImageLength));
-
-        CacheAnalysis(isoPath, game);
-
-        PrintGameInformation(game);
-
-        if (!hasCachedAnalysis)
+        try
         {
-            form?.UpdateActivity("Looking up game information...");
+            using var source = await Task.Run(
+                () => ArchiveImageSource.Open(
+                    isoPath,
+                    progress: progress));
+
+            await AnalyzeOpenedSourceAsync(
+                source,
+                form,
+                hasCachedAnalysis,
+                printInformation: true);
         }
-
-        await PrintDatabaseInformationAsync(game, form);
-
-        if (!hasCachedAnalysis)
+        catch (Exception ex)
         {
-            form?.ScrollOutputToTop();
+            Console.WriteLine();
+            Console.WriteLine("Analysis failed:");
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            form?.StopActivity();
         }
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Analysis failed:");
-        Console.WriteLine(ex.Message);
-    }
-    finally
-    {
-        form?.StopActivity();
-    }
-}
 
 internal static bool TryGetCachedAnalysis(
     string sourcePath,
     out GameImageInfo? game)
 {
-    game = null;
-
-    if (_lastAnalyzedGame is null ||
-        string.IsNullOrWhiteSpace(_lastAnalyzedSourcePath))
-    {
-        return false;
-    }
-
-    string fullPath = Path.GetFullPath(sourcePath);
-
-    if (!string.Equals(
-        fullPath,
-        _lastAnalyzedSourcePath,
-        StringComparison.OrdinalIgnoreCase))
-    {
-        return false;
-    }
-
-    game = _lastAnalyzedGame;
-    return true;
+    return AnalysisService.TryGetCachedAnalysis(
+        sourcePath,
+        out game);
 }
 
 internal static bool TryGetLastAnalyzedSourcePath(
     out string? sourcePath)
 {
-    sourcePath = null;
-
-    if (_lastAnalyzedGame is null ||
-        string.IsNullOrWhiteSpace(_lastAnalyzedSourcePath) ||
-        !File.Exists(_lastAnalyzedSourcePath))
-    {
-        return false;
-    }
-
-    sourcePath = _lastAnalyzedSourcePath;
-    return true;
+    return AnalysisService.TryGetLastAnalyzedSourcePath(
+        out sourcePath);
 }
 
-    internal static void CacheAnalysis(
+internal static void CacheAnalysis(
     string sourcePath,
     GameImageInfo game)
 {
-    _lastAnalyzedSourcePath = Path.GetFullPath(sourcePath);
-    _lastAnalyzedGame = game;
+    AnalysisService.CacheAnalysis(
+        sourcePath,
+        game);
 }
 
-    internal static async Task PrintDatabaseInformationAsync(
+internal static GameImageInfo AnalyzeSource(
+    ArchiveImageSource source,
+    out bool hasCachedAnalysis)
+{
+    return AnalysisService.Analyze(
+        source,
+        out hasCachedAnalysis);
+}
+
+internal static async Task PrintDatabaseInformationAsync(
     GameImageInfo game,
     MainForm? form = null)
 {

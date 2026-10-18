@@ -1,3 +1,4 @@
+
 using XISO.Core.Data;
 using XISO.Core.Metadata;
 using XISO.Core.Models;
@@ -139,7 +140,14 @@ public sealed class XboxGameImageAnalyzer
 
         // Preserve the XEX execution metadata.
         result.TitleId = executionId.TitleId.ToString("X8");
-        result.MediaId = executionId.MediaId.ToString("X8");
+
+        // Read the actual 16-byte XEX Media ID separately from
+        // the four-byte MediaId field in the Execution ID.
+        byte[] mediaId = xexReader.ReadMediaId(xexData);
+
+        // The final four bytes match the Media ID used by DBox.
+        result.MediaId = Convert.ToHexString(
+            mediaId.AsSpan(mediaId.Length - 4));
 
         result.XexVersion = executionId.Version;
         result.XexBaseVersion = executionId.BaseVersion;
@@ -158,7 +166,7 @@ public sealed class XboxGameImageAnalyzer
         result.XexRegion =
             Xex2RegionDecoder.Decode(security.GameRegion);
 
-        // Recover the title from the embedded XDBF resource.
+        // Recover the title from the PE section named with the Title ID.
         byte[] image;
 
         try
@@ -173,43 +181,18 @@ public sealed class XboxGameImageAnalyzer
             return;
         }
 
-        var resourceReader = new Xex2ResourceInfoReader();
-        var resources = resourceReader.ReadResources(xexData);
-
-        var titleResource = resources.FirstOrDefault(resource =>
-            string.Equals(
-                resource.Name,
-                result.TitleId,
-                StringComparison.OrdinalIgnoreCase));
+        byte[]? titleResource =
+            Xex2PeSectionReader.FindTitleResource(
+                image, result.TitleId);
 
         if (titleResource is null)
-        {
             return;
-        }
-
-        long resourceOffset =
-            (long)titleResource.Address - security.LoadAddress;
-
-        if (titleResource.Size > int.MaxValue ||
-            resourceOffset < 0 ||
-            resourceOffset + titleResource.Size > image.Length)
-        {
-            throw new InvalidDataException(
-                $"XEX title resource '{titleResource.Name}' " +
-                "extends beyond the reconstructed image.");
-        }
-
-        byte[] resourceData = image.AsSpan(
-            (int)resourceOffset,
-            (int)titleResource.Size).ToArray();
 
         var titleReader = new XdbfTitleReader();
-        string? title = titleReader.ReadTitle(resourceData);
+        string? title = titleReader.ReadTitle(titleResource);
 
         if (!string.IsNullOrWhiteSpace(title))
-        {
             result.Title = title;
-        }
     }
 
     private void AnalyzeXbe(

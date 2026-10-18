@@ -14,10 +14,12 @@ internal sealed class MainForm : Form
         IntPtr hWnd,
         int msg,
         IntPtr wParam,
-        IntPtr lParam); 
+        IntPtr lParam);
+
     private readonly RichTextBox _output;
     private readonly Label _activityLabel;
-    private readonly System.Windows.Forms.Timer _activityTimer;
+    private readonly GameAnalysisActivity _gameAnalysisActivity;
+
     private readonly System.Windows.Forms.Timer _scrollTimer = new()
     {
         Interval = 15
@@ -25,15 +27,7 @@ internal sealed class MainForm : Form
 
     private int _scrollStartLine;
     private long _scrollStartTime;
-    private int _activityFrame;
-    private string _activityMessage = string.Empty;
     private bool _suppressNextActionScrollToTop;
-
-    private static readonly string[] ActivityFrames =
-    [
-        "⠋", "⠙", "⠹", "⠸", "⠼",
-    "⠴", "⠦", "⠧", "⠇", "⠏"
-    ];
 
     private readonly Func<Task> _installAction;
     private readonly Func<Task> _analyzeAction;
@@ -177,7 +171,7 @@ internal sealed class MainForm : Form
 
         _updateButton.Click += async (_, _) =>
         {
-            _output.Clear();
+            ClearOutput();
             SetArtwork(null);
 
             await RunActionAsync(_updateAction);
@@ -185,7 +179,7 @@ internal sealed class MainForm : Form
 
         _x360UpdateButton.Click += async (_, _) =>
         {
-            _output.Clear();
+            ClearOutput();
             SetArtwork(null);
 
             if (_x360UpdateAction == null)
@@ -279,19 +273,9 @@ internal sealed class MainForm : Form
             Visible = false
         };
 
-        _activityTimer = new System.Windows.Forms.Timer
-        {
-            Interval = 100
-        };
+        _gameAnalysisActivity =
+            new GameAnalysisActivity(_activityLabel);
 
-        _activityTimer.Tick += (_, _) =>
-        {
-            _activityFrame =
-                (_activityFrame + 1) % ActivityFrames.Length;
-
-            _activityLabel.Text =
-                $"{ActivityFrames[_activityFrame]}  {_activityMessage.ToUpperInvariant()}";
-        };
         _scrollTimer.Tick += ScrollTimer_Tick;
 
         outputPanel.Controls.Add(_output, 0, 0);
@@ -387,8 +371,7 @@ internal sealed class MainForm : Form
 
         FormClosed += (_, _) =>
         {
-            _activityTimer.Stop();
-            _activityTimer.Dispose();
+            _gameAnalysisActivity.Dispose();
 
             _scrollTimer.Stop();
             _scrollTimer.Dispose();
@@ -564,66 +547,17 @@ internal sealed class MainForm : Form
 
     internal void StartActivity(string message)
     {
-        if (IsDisposed || Disposing)
-        {
-            return;
-        }
-
-        if (InvokeRequired)
-        {
-            BeginInvoke(
-                new Action(() => StartActivity(message)));
-
-            return;
-        }
-
-        _activityMessage = message;
-        _activityFrame = 0;
-
-        _activityLabel.Text =
-            $"{ActivityFrames[_activityFrame]}  {_activityMessage.ToUpperInvariant()}";
-
-        _activityLabel.Visible = true;
-        _activityTimer.Start();
+        _gameAnalysisActivity.Start(message);
     }
 
     internal void UpdateActivity(string message)
     {
-        if (IsDisposed || Disposing)
-        {
-            return;
-        }
-
-        if (InvokeRequired)
-        {
-            BeginInvoke(
-                new Action(() => UpdateActivity(message)));
-
-            return;
-        }
-
-        _activityMessage = message;
-
-        _activityLabel.Text =
-            $"{ActivityFrames[_activityFrame]}  {_activityMessage.ToUpperInvariant()}";
+        _gameAnalysisActivity.Update(message);
     }
 
     internal void StopActivity()
     {
-        if (IsDisposed || Disposing)
-        {
-            return;
-        }
-
-        if (InvokeRequired)
-        {
-            BeginInvoke(new Action(StopActivity));
-            return;
-        }
-
-        _activityTimer.Stop();
-        _activityLabel.Visible = false;
-        _activityLabel.Text = string.Empty;
+        _gameAnalysisActivity.Stop();
     }
 
     internal void ScrollOutputToTop()

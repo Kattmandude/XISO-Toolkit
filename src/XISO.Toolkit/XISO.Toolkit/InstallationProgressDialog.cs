@@ -23,6 +23,8 @@ internal sealed class InstallationProgressDialog : Form
 
     private bool _started;
     private bool _finished;
+    private bool _installationSucceeded;
+    private string? _installedPath;
 
     private InstallationProgressDialog(
         string title,
@@ -172,7 +174,7 @@ internal sealed class InstallationProgressDialog : Form
         CancelButton = _cancelButton;
     }
 
-    public static void Show(
+    public static (bool Succeeded, string? InstalledPath) Show(
         string title,
         string method,
         string source,
@@ -198,7 +200,10 @@ internal sealed class InstallationProgressDialog : Form
         if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
         {
             ShowOnStaThread();
-            return;
+
+            return (
+                dialog._installationSucceeded,
+                dialog._installedPath);
         }
 
         Exception? error = null;
@@ -220,8 +225,14 @@ internal sealed class InstallationProgressDialog : Form
         thread.Join();
 
         if (error is not null)
+        {
             throw new InvalidOperationException(
                 "Could not display the installation window.", error);
+        }
+
+        return (
+            dialog._installationSucceeded,
+            dialog._installedPath);
     }
 
     private async void StartInstallation()
@@ -242,6 +253,8 @@ internal sealed class InstallationProgressDialog : Form
             string installedPath = await Task.Run(
                 () => _operation(progress, _cancellation.Token));
 
+            _installedPath = installedPath;
+            _installationSucceeded = true;
             _progressBar.Style = ProgressBarStyle.Continuous;
             _progressBar.Value = 100;
             _stageLabel.Text = "Completed";

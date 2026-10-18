@@ -42,7 +42,8 @@ internal sealed class ArchiveImageSource : IDisposable
     public static ArchiveImageSource Open(
         string sourcePath,
         int maxBufferedMB = 16384,
-        bool logDetails = true)
+        bool logDetails = true,
+        IProgress<string>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
 
@@ -90,14 +91,20 @@ internal sealed class ArchiveImageSource : IDisposable
                 "Select an ISO, XISO, ZIP, 7z, or RAR file.");
         }
 
+        progress?.Report("Locating 7-Zip...");
+
         string sevenZipPath = FindSevenZip();
+
+        progress?.Report("Listing archive contents...");
 
         List<ArchiveEntry> entries = ListArchiveEntries(
             sevenZipPath,
             sourcePath);
 
+        progress?.Report("Searching for an ISO/XISO image...");
+
         ArchiveEntry[] candidates = entries
-            .Where(entry =>
+                    .Where(entry =>
                 !entry.IsDirectory &&
                 (Path.GetExtension(entry.Name).Equals(
                      ".iso", StringComparison.OrdinalIgnoreCase) ||
@@ -144,13 +151,16 @@ internal sealed class ArchiveImageSource : IDisposable
             Console.WriteLine($"Image size: {candidate.Size:N0} bytes");
             Console.WriteLine($"Maximum temporary cache: {maxBufferedMB:N0} MB");
         }
+        
+        progress?.Report("Preparing compressed image stream...");
 
         Stream stream = new SevenZipEntryStream(
             sevenZipPath,
             sourcePath,
             candidate.Name,
             candidate.Size,
-            maxBufferedMB);
+            maxBufferedMB,
+            progress);
 
         return new ArchiveImageSource(
             sourcePath,
@@ -341,16 +351,22 @@ internal sealed class ArchiveImageSource : IDisposable
         private bool _eof;
         private bool _disposed;
 
+        private readonly IProgress<string>? _progress;
+        private long _lastProgressBytes;
+
         public SevenZipEntryStream(
             string sevenZipPath,
             string archivePath,
             string entryName,
             long length,
-            int maxBufferedMB)
+            int maxBufferedMB,
+            IProgress<string>? progress)
         {
             _length = length;
             _maximumBufferedBytes = checked(
                 (long)maxBufferedMB * 1024 * 1024);
+
+            _progress = progress;
 
             _cachePath = Path.Combine(
                 Path.GetTempPath(),
@@ -630,6 +646,26 @@ internal sealed class ArchiveImageSource : IDisposable
                 _cache.Position = _bufferedLength;
                 _cache.Write(block, 0, totalRead);
                 _bufferedLength += totalRead;
+
+                // Report the first block, then approximately every 64 MB.
+                if (_lastProgressBytes == 0 ||
+                    _bufferedLength - _lastProgressBytes >= 64L * 1024 * 1024 ||
+                    _bufferedLength >= _length)
+                {
+                    long bufferedMB = _bufferedLength / (1024 * 1024);
+                    long totalMB = _length / (1024 * 1024);
+
+                    double percentage =
+                        _length > 0
+                            ? _bufferedLength * 100.0 / _length
+                            : 100.0;
+
+                    _progress?.Report(
+                        $"Decompressing and caching image: " +
+                        $"{bufferedMB:N0} / {totalMB:N0} MB ({percentage:N0}%)");
+
+                    _lastProgressBytes = _bufferedLength;
+                }
             }
 
             if (_bufferedLength < target)

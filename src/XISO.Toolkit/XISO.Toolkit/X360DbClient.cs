@@ -8,7 +8,7 @@ namespace XISO.Toolkit;
 public sealed class X360DbClient
 {
     private const string PrimaryBaseUrl =
-        "https://xenia-manager.github.io/gamesdatabase/";
+    "https://xenia-manager.github.io/x360db/";
 
     private const string FallbackBaseUrl =
         "https://raw.githubusercontent.com/xenia-manager/x360db/main/";
@@ -463,34 +463,56 @@ public sealed class X360DbClient
     }
 
     private async Task<byte[]> DownloadIndexAsync(
-        CancellationToken cancellationToken)
+    CancellationToken cancellationToken)
     {
-        try
+        string[] urls =
+        [
+            PrimaryBaseUrl + "games.json",
+        FallbackBaseUrl + "games.json"
+        ];
+
+        List<string> failures = [];
+
+        foreach (string url in urls)
         {
-            using HttpResponseMessage response =
-                await _httpClient.GetAsync(
-                    PrimaryBaseUrl + "games.json",
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken);
+            try
+            {
+                using HttpResponseMessage response =
+                    await _httpClient.GetAsync(
+                        url,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        cancellationToken);
 
-            response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                {
+                    failures.Add(
+                        $"{url} returned HTTP {(int)response.StatusCode} ({response.StatusCode}).");
 
-            return await response.Content.ReadAsByteArrayAsync(
-                cancellationToken);
+                    continue;
+                }
+
+                byte[] data =
+                    await response.Content.ReadAsByteArrayAsync(
+                        cancellationToken);
+
+                ValidateIndex(data);
+
+                return data;
+            }
+            catch (OperationCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
+            {
+                failures.Add($"{url} timed out.");
+            }
+            catch (HttpRequestException ex)
+            {
+                failures.Add($"{url}: {ex.Message}");
+            }
         }
-        catch (HttpRequestException)
-        {
-            using HttpResponseMessage response =
-                await _httpClient.GetAsync(
-                    FallbackBaseUrl + "games.json",
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken);
 
-            response.EnsureSuccessStatusCode();
-
-            return await response.Content.ReadAsByteArrayAsync(
-                cancellationToken);
-        }
+        throw new HttpRequestException(
+            "Unable to download a valid x360db index. " +
+            string.Join(" ", failures));
     }
 
     private async Task<byte[]?> TryDownloadAsync(

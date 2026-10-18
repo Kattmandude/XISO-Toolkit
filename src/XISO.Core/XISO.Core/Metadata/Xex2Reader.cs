@@ -1,3 +1,4 @@
+
 namespace XISO.Core.Metadata;
 
 public sealed class Xex2Reader
@@ -10,8 +11,7 @@ public sealed class Xex2Reader
             throw new InvalidDataException(
                 "XEX2 header requires at least 24 bytes.");
 
-        uint magic =
-            ReadUInt32BigEndian(data, 0);
+        uint magic = ReadUInt32BigEndian(data, 0);
 
         if (magic != 0x58455832)
             throw new InvalidDataException(
@@ -35,8 +35,7 @@ public sealed class Xex2Reader
             throw new InvalidDataException(
                 "XEX2 header requires at least 24 bytes.");
 
-        uint magic =
-            ReadUInt32BigEndian(data, 0);
+        uint magic = ReadUInt32BigEndian(data, 0);
 
         if (magic != 0x58455832)
             throw new InvalidDataException(
@@ -66,24 +65,21 @@ public sealed class Xex2Reader
 
         for (int i = 0; i < optionalHeaderCount; i++)
         {
-            uint key =
-                ReadUInt32BigEndian(data, offset);
+            uint key = ReadUInt32BigEndian(data, offset);
+            uint value = ReadUInt32BigEndian(data, offset + 4);
 
-            uint value =
-                ReadUInt32BigEndian(data, offset + 4);
-
-            headers.Add(
-                new Xex2OptionalHeader
-                {
-                    Key = key,
-                    Value = value
-                });
+            headers.Add(new Xex2OptionalHeader
+            {
+                Key = key,
+                Value = value
+            });
 
             offset += optionalHeaderSize;
         }
 
         return headers;
     }
+
     public Xex2OptionalHeader? FindOptionalHeader(
         byte[] data,
         uint type,
@@ -102,6 +98,42 @@ public sealed class Xex2Reader
 
         return null;
     }
+
+    /// <summary>
+    /// Reads the 16-byte Media ID from the XEX Security Info structure.
+    /// This is distinct from the four-byte MediaId field in the
+    /// Execution ID optional header.
+    /// </summary>
+    public byte[] ReadMediaId(byte[] xexData)
+    {
+        ArgumentNullException.ThrowIfNull(xexData);
+
+        var header = ReadHeader(xexData);
+
+        if (header.SecurityInfoOffset > int.MaxValue)
+        {
+            throw new InvalidDataException(
+                "XEX2 Security Info offset is too large.");
+        }
+
+        // Media ID offset relative to the Security Info structure.
+        const int mediaIdOffset = 0x140;
+        const int mediaIdSize = 16;
+
+        int securityOffset = (int)header.SecurityInfoOffset;
+        long absoluteOffset = (long)securityOffset + mediaIdOffset;
+
+        if (absoluteOffset + mediaIdSize > xexData.Length)
+        {
+            throw new InvalidDataException(
+                "XEX2 Media ID extends beyond the supplied XEX data.");
+        }
+
+        return xexData.AsSpan(
+            (int)absoluteOffset,
+            mediaIdSize).ToArray();
+    }
+
     public Xex2SecurityInfo ReadSecurityInfo(byte[] xexData)
     {
         ArgumentNullException.ThrowIfNull(xexData);
@@ -109,8 +141,10 @@ public sealed class Xex2Reader
         var header = ReadHeader(xexData);
 
         if (header.SecurityInfoOffset > int.MaxValue)
+        {
             throw new InvalidDataException(
                 "XEX2 Security Info offset is too large.");
+        }
 
         int securityOffset = (int)header.SecurityInfoOffset;
 
@@ -127,7 +161,8 @@ public sealed class Xex2Reader
         uint imageSize =
             ReadUInt32BigEndian(xexData, securityOffset + 4);
 
-        // Image Info begins after the 8-byte security header and 256-byte signature.
+        // Image Info begins after the 8-byte security header
+        // and 256-byte signature.
         int imageInfoOffset = securityOffset + 8 + 256;
 
         // Load address is at Image Info + 8.
@@ -138,7 +173,8 @@ public sealed class Xex2Reader
         const int aesKeyOffset = 72;
         const int aesKeySize = 16;
 
-        if ((long)imageInfoOffset + aesKeyOffset + aesKeySize > xexData.Length)
+        if ((long)imageInfoOffset + aesKeyOffset + aesKeySize >
+            xexData.Length)
         {
             throw new InvalidDataException(
                 "XEX2 AES key extends beyond the supplied XEX data.");
@@ -158,10 +194,9 @@ public sealed class Xex2Reader
                 "XEX2 region field extends beyond the supplied XEX data.");
         }
 
-        uint gameRegion =
-            ReadUInt32BigEndian(
-                xexData,
-                securityOffset + regionOffset);
+        uint gameRegion = ReadUInt32BigEndian(
+            xexData,
+            securityOffset + regionOffset);
 
         return new Xex2SecurityInfo
         {
@@ -171,15 +206,15 @@ public sealed class Xex2Reader
             GameRegion = gameRegion
         };
     }
+
     public Xex2ExecutionId ReadExecutionId(byte[] xexData)
     {
         ArgumentNullException.ThrowIfNull(xexData);
 
-        var header =
-            FindOptionalHeader(
-                xexData,
-                0x000400,
-                0x06);
+        var header = FindOptionalHeader(
+            xexData,
+            0x000400,
+            0x06);
 
         if (header is null)
         {
@@ -189,8 +224,7 @@ public sealed class Xex2Reader
 
         const int executionIdSize = 24;
 
-        long end =
-            (long)header.Value + executionIdSize;
+        long end = (long)header.Value + executionIdSize;
 
         if (header.Value > int.MaxValue ||
             end > xexData.Length)
@@ -199,14 +233,13 @@ public sealed class Xex2Reader
                 "XEX2 Execution ID extends beyond the supplied XEX data.");
         }
 
-        byte[] executionIdData =
-            xexData.AsSpan(
-                (int)header.Value,
-                executionIdSize)
-            .ToArray();
+        byte[] executionIdData = xexData.AsSpan(
+            (int)header.Value,
+            executionIdSize).ToArray();
 
         return ReadExecutionIdData(executionIdData);
     }
+
     public Xex2ExecutionId ReadExecutionIdData(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -214,8 +247,10 @@ public sealed class Xex2Reader
         const int executionIdSize = 24;
 
         if (data.Length < executionIdSize)
+        {
             throw new InvalidDataException(
                 "XEX2 Execution ID requires at least 24 bytes.");
+        }
 
         return new Xex2ExecutionId
         {
@@ -230,6 +265,7 @@ public sealed class Xex2Reader
             SaveGameId = ReadUInt32BigEndian(data, 20)
         };
     }
+
     private static uint ReadUInt32BigEndian(
         byte[] data,
         int offset)
