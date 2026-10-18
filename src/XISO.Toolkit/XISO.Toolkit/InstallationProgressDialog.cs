@@ -14,17 +14,17 @@ internal sealed class InstallationProgressDialog : Form
 
     private readonly CancellationTokenSource _cancellation = new();
 
-    private readonly Label _statusLabel;
     private readonly Label _stageLabel;
     private readonly Label _destinationLabel;
     private readonly ProgressBar _progressBar;
-    private readonly Button _startButton;
-    private readonly Button _cancelButton;
+    private readonly TextBox _summaryBox;
+    private readonly Button _closeButton;
 
     private bool _started;
     private bool _finished;
     private bool _installationSucceeded;
     private string? _installedPath;
+    private bool _cancellationDisposed;
 
     private InstallationProgressDialog(
         string title,
@@ -37,8 +37,8 @@ internal sealed class InstallationProgressDialog : Form
         _operation = operation;
 
         Text = "Game Installation";
-        Width = 720;
-        Height = 390;
+        Width = 740;
+        Height = 540;
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -48,25 +48,27 @@ internal sealed class InstallationProgressDialog : Form
         {
             Left = 18,
             Top = 18,
-            Width = 665,
+            Width = 685,
             Height = 24,
-            Text = $"Game: {title}"
+            Text = $"Game: {title}",
+            AutoEllipsis = true
         };
 
         var methodLabel = new Label
         {
             Left = 18,
             Top = 48,
-            Width = 665,
+            Width = 685,
             Height = 24,
-            Text = $"Operation: {method}"
+            Text = $"Operation: {method}",
+            AutoEllipsis = true
         };
 
         var sourceLabel = new Label
         {
             Left = 18,
             Top = 78,
-            Width = 665,
+            Width = 685,
             Height = 42,
             Text = $"Source: {source}",
             AutoEllipsis = true
@@ -76,65 +78,57 @@ internal sealed class InstallationProgressDialog : Form
         {
             Left = 18,
             Top = 124,
-            Width = 665,
-            Height = 48,
+            Width = 685,
+            Height = 42,
             Text = $"Destination: {destination}",
-            AutoEllipsis = false,
-            AutoSize = false
+            AutoEllipsis = true
         };
 
         _stageLabel = new Label
         {
             Left = 18,
-            Top = 180,
-            Width = 665,
-            Height = 22,
-            Text = "Ready to install.",
-            AutoEllipsis = true
+            Top = 176,
+            Width = 685,
+            Height = 24,
+            Text = "Preparing installation..."
         };
 
         _progressBar = new ProgressBar
         {
             Left = 18,
-            Top = 207,
-            Width = 665,
-            Height = 22,
+            Top = 205,
+            Width = 685,
+            Height = 24,
             Minimum = 0,
             Maximum = 100,
-            Style = ProgressBarStyle.Continuous
+            Style = ProgressBarStyle.Marquee,
+            MarqueeAnimationSpeed = 30
         };
 
-        _statusLabel = new Label
+        _summaryBox = new TextBox
         {
             Left = 18,
-            Top = 237,
-            Width = 665,
-            Height = 50,
-            Text = "Review the destination, then start installation.",
-            AutoSize = false
+            Top = 241,
+            Width = 685,
+            Height = 190,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            WordWrap = true,
+            Text = "Starting installation..."
         };
 
-        _startButton = new Button
-        {
-            Text = "Start Installation",
-            Left = 442,
-            Top = 320,
-            Width = 125,
-            DialogResult = DialogResult.None
-        };
-
-        _cancelButton = new Button
+        _closeButton = new Button
         {
             Text = "Cancel",
-            Left = 578,
-            Top = 320,
-            Width = 105,
+            Left = 583,
+            Top = 448,
+            Width = 120,
+            Height = 32,
             DialogResult = DialogResult.None
         };
 
-        _startButton.Click += (_, _) => StartInstallation();
-
-        _cancelButton.Click += (_, _) =>
+        _closeButton.Click += (_, _) =>
         {
             if (_finished)
             {
@@ -143,18 +137,7 @@ internal sealed class InstallationProgressDialog : Form
                 return;
             }
 
-            if (_started)
-            {
-                _cancellation.Cancel();
-                _cancelButton.Enabled = false;
-                _statusLabel.Text =
-                    "Cancellation requested. Waiting for the current operation to stop...";
-            }
-            else
-            {
-                DialogResult = DialogResult.Cancel;
-                Close();
-            }
+            RequestCancellation();
         };
 
         Controls.AddRange(
@@ -165,13 +148,13 @@ internal sealed class InstallationProgressDialog : Form
             _destinationLabel,
             _stageLabel,
             _progressBar,
-            _statusLabel,
-            _startButton,
-            _cancelButton
+            _summaryBox,
+            _closeButton
         ]);
 
-        AcceptButton = _startButton;
-        CancelButton = _cancelButton;
+        CancelButton = _closeButton;
+
+        Shown += (_, _) => StartInstallation();
     }
 
     public static (bool Succeeded, string? InstalledPath) Show(
@@ -241,11 +224,11 @@ internal sealed class InstallationProgressDialog : Form
             return;
 
         _started = true;
-        _startButton.Enabled = false;
-        _cancelButton.Text = "Cancel";
-        _statusLabel.Text = "Starting installation...";
+        _closeButton.Text = "Cancel";
+        _summaryBox.Text = "Starting installation...";
 
-        // Progress<T> captures this window's UI synchronization context.
+        // Created on the UI thread so progress updates are marshalled
+        // back to this form.
         var progress = new Progress<InstallationProgress>(UpdateProgress);
 
         try
@@ -255,62 +238,130 @@ internal sealed class InstallationProgressDialog : Form
 
             _installedPath = installedPath;
             _installationSucceeded = true;
-            _progressBar.Style = ProgressBarStyle.Continuous;
-            _progressBar.Value = 100;
-            _stageLabel.Text = "Completed";
-            _statusLabel.Text =
-                $"Installation completed successfully.{Environment.NewLine}{installedPath}";
 
-            _finished = true;
-            _cancelButton.Text = "Close";
-            _cancelButton.Enabled = true;
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.MarqueeAnimationSpeed = 0;
+            _progressBar.Value = 100;
+
+            _stageLabel.Text = "Completed";
+
+            if (string.IsNullOrWhiteSpace(_summaryBox.Text) ||
+                _summaryBox.Text == "Starting installation...")
+            {
+                _summaryBox.Text =
+                    "Installation completed successfully.";
+            }
+
+            if (!_summaryBox.Text.Contains(
+                    installedPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _summaryBox.AppendText(
+                    Environment.NewLine +
+                    Environment.NewLine +
+                    "Installed to:" +
+                    Environment.NewLine +
+                    installedPath);
+            }
+
+            _destinationLabel.Text = $"Installed location: {installedPath}";
+
+            Finish();
         }
         catch (OperationCanceledException)
         {
             _stageLabel.Text = "Cancelled";
-            _statusLabel.Text =
-                "Installation was cancelled. Any incomplete staging data was cleaned up where possible.";
+            _summaryBox.AppendText(
+                Environment.NewLine +
+                Environment.NewLine +
+                "The operation was cancelled. The game may already have been installed if cancellation occurred during Title Update downloading.");
 
-            _finished = true;
-            _cancelButton.Text = "Close";
-            _cancelButton.Enabled = true;
+            Finish();
         }
         catch (Exception ex)
         {
             _stageLabel.Text = "Failed";
-            _statusLabel.Text = $"Installation failed: {ex.Message}";
+            _summaryBox.AppendText(
+                Environment.NewLine +
+                Environment.NewLine +
+                "Operation failed:" +
+                Environment.NewLine +
+                ex.Message);
 
-            _finished = true;
-            _cancelButton.Text = "Close";
-            _cancelButton.Enabled = true;
+            Finish();
         }
     }
 
     private void UpdateProgress(InstallationProgress update)
     {
-        if (IsDisposed || Disposing)
+        if (IsDisposed || Disposing || _finished)
             return;
 
         _stageLabel.Text = update.Stage;
-        _statusLabel.Text = update.Message;
+        _summaryBox.Text = update.Message;
 
         if (update.Percent is int percent)
         {
+            _progressBar.MarqueeAnimationSpeed = 0;
             _progressBar.Style = ProgressBarStyle.Continuous;
             _progressBar.Value = Math.Clamp(percent, 0, 100);
         }
         else
         {
             _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 30;
         }
+    }
+
+    private void RequestCancellation()
+    {
+        if (_finished || _cancellation.IsCancellationRequested)
+            return;
+
+        _cancellation.Cancel();
+        _closeButton.Enabled = false;
+        _closeButton.Text = "Cancelling...";
+        _summaryBox.AppendText(
+            Environment.NewLine +
+            Environment.NewLine +
+            "Cancellation requested. Waiting for the current operation to stop...");
+    }
+
+    private void Finish()
+    {
+        _finished = true;
+        _progressBar.Style = ProgressBarStyle.Continuous;
+        _progressBar.MarqueeAnimationSpeed = 0;
+        _closeButton.Text = "Close";
+        _closeButton.Enabled = true;
+        AcceptButton = _closeButton;
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!_finished)
+        {
+            // Keep the window visible until cancellation or installation
+            // has actually finished. The user closes it from the summary.
+            e.Cancel = true;
+
+            if (_started)
+                RequestCancellation();
+
+            return;
+        }
+
+        base.OnFormClosing(e);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        if (!_finished && _started)
-            _cancellation.Cancel();
+        if (!_cancellationDisposed)
+        {
+            _cancellationDisposed = true;
+            _cancellation.Dispose();
+        }
 
-        _cancellation.Dispose();
         base.OnFormClosed(e);
     }
 }

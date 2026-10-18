@@ -415,79 +415,124 @@ public static class GameInstallationWorkflow
                 selectedSourcePath,
                 outputPath,
                 (progress, cancellationToken) =>
-                    installer.Install(
+                {
+                    string installedPath = installer.Install(
                         installationSource.ImageStream,
                         installationSource.ImageName,
                         request,
                         progress,
-                        cancellationToken));
+                        cancellationToken);
 
+                    var summaryLines = new List<string>
+                    {
+                        "Installation completed successfully.",
+                        $"Installed to: {installedPath}"
+                    };
+
+                    if (game.Platform == XboxPlatform.Xbox360 &&
+                        options.DownloadTitleUpdates)
+                    {
+                        summaryLines.Add(string.Empty);
+                        summaryLines.Add("XboxUnity Title Update summary");
+
+                        string titleUpdatePath =
+                            options.TitleUpdatePath.Trim();
+
+                        if (string.IsNullOrWhiteSpace(titleUpdatePath))
+                        {
+                            summaryLines.Add(
+                                "Title Update download skipped: no destination was selected.");
+                            summaryLines.Add("Found: 0");
+                            summaryLines.Add("Downloaded: 0");
+                            summaryLines.Add("Failed: 1");
+                        }
+                        else
+                        {
+                            var downloader = new TitleUpdateDownloader();
+
+                            progress.Report(new InstallationProgress(
+                                "Checking XboxUnity",
+                                $"Checking XboxUnity for updates for Title ID {game.TitleId}...",
+                                null));
+
+                            var search = downloader.CheckForUpdatesAsync(
+                                game.TitleId,
+                                game.MediaId,
+                                cancellationToken)
+                                .GetAwaiter()
+                                .GetResult();
+
+                            if (!search.Succeeded)
+                            {
+                                summaryLines.Add(
+                                    "XboxUnity check failed: " +
+                                    (search.Error ??
+                                     "No further details were provided."));
+                                summaryLines.Add("Found: unavailable");
+                                summaryLines.Add("Downloaded: 0");
+                                summaryLines.Add("Failed: 1");
+                            }
+                            else
+                            {
+                                progress.Report(new InstallationProgress(
+                                    "Checking XboxUnity",
+                                    $"Found {search.Updates.Count} matching Title Update(s). Preparing downloads...",
+                                    100));
+
+                                var downloadProgress =
+                                    new Progress<string>(message =>
+                                        progress.Report(
+                                            new InstallationProgress(
+                                                "Downloading Title Updates",
+                                                message,
+                                                null)));
+
+                                var downloadResult =
+                                    downloader.DownloadAsync(
+                                        game.TitleId,
+                                        game.MediaId,
+                                        titleUpdatePath,
+                                        downloadProgress,
+                                        cancellationToken,
+                                        knownUpdates: search.Updates)
+                                    .GetAwaiter()
+                                    .GetResult();
+
+                                summaryLines.Add(
+                                    $"Found: {downloadResult.Found}");
+                                summaryLines.Add(
+                                    $"Downloaded: {downloadResult.Downloaded}");
+                                summaryLines.Add(
+                                    $"Failed: {downloadResult.Failed}");
+
+                                if (downloadResult.Messages.Count > 0)
+                                {
+                                    summaryLines.Add(string.Empty);
+                                    summaryLines.Add("Title Update details:");
+
+                                    summaryLines.AddRange(
+                                        downloadResult.Messages);
+                                }
+                            }
+                        }
+                    }
+
+                    string finalSummary =
+                        string.Join(Environment.NewLine, summaryLines);
+
+                    progress.Report(new InstallationProgress(
+                        "Completed",
+                        finalSummary,
+                        100));
+
+                    return installedPath;
+                });
+
+            // The progress window itself now contains the installation
+            // and optional Title Update summary. Do not show a second
+            // Title Update MessageBox.
             if (!installationResult.Succeeded)
                 return;
-
-            string installedGamePath = installationResult.InstalledPath!;
-
-            // Only download Title Updates after successful installation
-            // and only when the user selected the checkbox.
-            if (game.Platform == XboxPlatform.Xbox360 &&
-                options.DownloadTitleUpdates)
-            {
-                try
-                {
-                    string titleUpdatePath = options.TitleUpdatePath.Trim();
-
-                    if (string.IsNullOrWhiteSpace(titleUpdatePath))
-                    {
-                        MessageBox.Show(
-                            "The game was installed successfully, but no Title Update destination was selected.",
-                            "Title Update Download",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Warning);
-                    }
-                    else
-                    {
-                        var downloader = new TitleUpdateDownloader();
-
-                        var downloadProgress = new Progress<string>(message =>
-                            System.Diagnostics.Debug.WriteLine(message));
-
-                        var downloadResult = await downloader.DownloadAsync(
-                            game.TitleId,
-                            game.MediaId,
-                            titleUpdatePath,
-                            downloadProgress,
-                            knownUpdates: options.AvailableTitleUpdates);
-
-                        string summary =
-                            $"Title Updates found: {downloadResult.Found}\r\n" +
-                            $"Downloaded: {downloadResult.Downloaded}\r\n" +
-                            $"Failed: {downloadResult.Failed}";
-
-                        if (downloadResult.Messages.Count > 0)
-                        {
-                            summary += "\r\n\r\nDetails:\r\n" +
-                                string.Join("\r\n", downloadResult.Messages);
-                        }
-
-                        MessageBox.Show(
-                            summary,
-                            "Title Update Download",
-                            MessageBoxButtons.OK,
-                            downloadResult.Failed > 0
-                                ? MessageBoxIcon.Warning
-                                : MessageBoxIcon.Information);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        "The game was installed successfully, but the Title Update download encountered an error.\r\n\r\n" +
-                        ex.Message,
-                        "Title Update Download",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                }
-            }
         }
         finally
         {
