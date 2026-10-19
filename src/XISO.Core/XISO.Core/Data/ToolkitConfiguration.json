@@ -3,12 +3,13 @@
     {
       "Name": "Xbox 360 Games",
       "Platform": "Xbox360",
-      "Path": "F:\\Emulators\\Xenia\\games"
+      "Path": ""
     },
     {
       "Name": "Original Xbox Games",
       "Platform": "OriginalXbox",
-      "Path": "F:\\Emulators\\Xemu\\games"
+      "Path": ""
     }
-  ]
+  ],
+  "LastImageDirectory": ""
 }

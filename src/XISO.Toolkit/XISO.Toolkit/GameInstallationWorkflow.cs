@@ -33,13 +33,16 @@ public static class GameInstallationWorkflow
                 {
                     Title = "Select an Xbox game ISO",
                     Filter = "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|Disc images (*.iso;*.xiso)|*.iso;*.xiso|Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*",
+                    InitialDirectory = Program.GetLastImageDirectory(),
                     CheckFileExists = true,
                     Multiselect = false
                 };
 
-                return dialog.ShowDialog() == DialogResult.OK
-                    ? dialog.FileName
-                    : null;
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return null;
+
+                Program.RememberImageDirectory(dialog.FileName);
+                return dialog.FileName;
             });
         }
 
@@ -295,6 +298,10 @@ public static class GameInstallationWorkflow
 
                 if (result?.Options is null)
                     return;
+
+                Program.RememberGameLibraryPath(
+                    game.Platform,
+                    result.Options.Root);
 
                 options = result.Options;
                 break;
@@ -1334,12 +1341,15 @@ public static class GameInstallationWorkflow
             {
                 Title = "Select a different Xbox game ISO",
                 Filter = "Xbox images and archives (*.iso;*.xiso;*.zip;*.7z;*.rar)|*.iso;*.xiso;*.zip;*.7z;*.rar|Disc images (*.iso;*.xiso)|*.iso;*.xiso|Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*",
+                InitialDirectory = Program.GetLastImageDirectory(),
                 CheckFileExists = true,
                 Multiselect = false
             };
 
             if (dialog.ShowDialog(form) != DialogResult.OK)
                 return;
+
+            Program.RememberImageDirectory(dialog.FileName);
 
             completion.TrySetResult(
                 new InstallOptionsResult(null, dialog.FileName));

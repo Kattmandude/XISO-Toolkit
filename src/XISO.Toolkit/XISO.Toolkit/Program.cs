@@ -10,6 +10,10 @@ internal static class Program
 {
     private static readonly GameAnalysisService AnalysisService = new();
 
+    private static ToolkitConfiguration? _configuration;
+    private static ToolkitConfigurationStore? _configurationStore;
+    private static string? _activeConfigurationPath;
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -27,6 +31,10 @@ internal static class Program
 
         var configurationStore = new ToolkitConfigurationStore();
         var configuration = configurationStore.Load(configurationPath);
+
+        _configuration = configuration;
+        _configurationStore = configurationStore;
+        _activeConfigurationPath = configurationPath;
 
         MainForm? form = null;
 
@@ -86,6 +94,104 @@ internal static class Program
         }
     }
 
+    internal static string GetLastImageDirectory()
+    {
+        string? directory = _configuration?.LastImageDirectory;
+
+        return !string.IsNullOrWhiteSpace(directory) &&
+               Directory.Exists(directory)
+            ? directory
+            : string.Empty;
+    }
+
+    internal static void RememberImageDirectory(string selectedFilePath)
+    {
+        if (_configuration is null ||
+            string.IsNullOrWhiteSpace(selectedFilePath))
+        {
+            return;
+        }
+
+        string? directory = Path.GetDirectoryName(selectedFilePath);
+
+        if (string.IsNullOrWhiteSpace(directory) ||
+            !Directory.Exists(directory))
+        {
+            return;
+        }
+
+        if (string.Equals(
+            _configuration.LastImageDirectory,
+            directory,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _configuration.LastImageDirectory = directory;
+        SaveConfiguration();
+    }
+
+    internal static void RememberGameLibraryPath(
+        XboxPlatform platform,
+        string selectedPath)
+    {
+        if (_configuration is null ||
+            string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        GameLibrary? library = _configuration.GameLibraries
+            .FirstOrDefault(item => item.Platform == platform);
+
+        if (library is null)
+        {
+            library = new GameLibrary
+            {
+                Name = platform == XboxPlatform.Xbox360
+                    ? "Xbox 360 Games"
+                    : "Original Xbox Games",
+                Platform = platform
+            };
+
+            _configuration.GameLibraries.Add(library);
+        }
+
+        if (string.Equals(
+            library.Path,
+            selectedPath,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        library.Path = selectedPath;
+        SaveConfiguration();
+    }
+
+    private static void SaveConfiguration()
+    {
+        if (_configuration is null ||
+            _configurationStore is null ||
+            string.IsNullOrWhiteSpace(_activeConfigurationPath))
+        {
+            return;
+        }
+
+        try
+        {
+            _configurationStore.Save(
+                _activeConfigurationPath,
+                _configuration);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"Could not save toolkit configuration: {ex.Message}");
+        }
+    }
+
     static Task RunInteractiveMenuAsync(ToolkitConfiguration configuration)
 {
     // The main window now provides the menu.
@@ -109,6 +215,7 @@ internal static class Program
                         "Disc images (*.iso;*.xiso)|*.iso;*.xiso|" +
                         "Archives (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|" +
                         "All files (*.*)|*.*",
+                    InitialDirectory = GetLastImageDirectory(),
                     CheckFileExists = true,
                     Multiselect = false
                 };
@@ -130,6 +237,8 @@ internal static class Program
         {
             return;
         }
+
+        RememberImageDirectory(selectedPath);
 
         // If this exact file is already analyzed, keep the
         // existing output and skip the scroll animation.
